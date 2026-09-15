@@ -12,8 +12,8 @@ android {
         applicationId = "games.cardgames"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 14
+        versionName = "0.8"
     }
 
     buildFeatures {
