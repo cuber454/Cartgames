@@ -59,9 +59,23 @@ class HandOrderTest {
     }
 
     @Test
+    fun `по достоинству с козырями в конце — сначала некозыри по возрастанию`() {
+        val sorted = HandOrder.BY_RANK_TRUMPS_LAST.sort(hand, HEARTS)
+        // Сначала некозыри по возрастанию: шестёрка и семёрка пик, король треф.
+        assertEquals(
+            listOf(Card(SIX, SPADES), Card(SEVEN, SPADES), Card(KING, CLUBS)),
+            sorted.take(3),
+        )
+        // Козыри — ровно две последние карты, и внутри тоже по возрастанию.
+        assertEquals(listOf(HEARTS, HEARTS), sorted.takeLast(2).map { it.suit })
+        assertEquals(listOf(SIX, ACE), sorted.takeLast(2).map { it.rank })
+    }
+
+    @Test
     fun `порядок переключается по кругу`() {
         assertEquals(HandOrder.BY_RANK, HandOrder.BY_SUIT.next())
-        assertEquals(HandOrder.TRUMPS_FIRST, HandOrder.BY_RANK.next())
+        assertEquals(HandOrder.BY_RANK_TRUMPS_LAST, HandOrder.BY_RANK.next())
+        assertEquals(HandOrder.TRUMPS_FIRST, HandOrder.BY_RANK_TRUMPS_LAST.next())
         assertEquals(HandOrder.BY_SUIT, HandOrder.TRUMPS_FIRST.next())
     }
 

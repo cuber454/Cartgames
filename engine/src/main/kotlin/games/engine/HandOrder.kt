@@ -18,12 +18,23 @@ enum class HandOrder(val title: String) {
     /** От шестёрки к тузу, масти перемешаны. */
     BY_RANK("по достоинству"),
 
+    /**
+     * От шестёрки к тузу, но козыри — отдельной группой в конце: внутри
+     * каждой группы карты идут по возрастанию. Так раскладывают в жизни,
+     * когда мелочь нужна по старшинству, а козыри — под рукой, но не
+     * вперемешку с остальным.
+     */
+    BY_RANK_TRUMPS_LAST("по достоинству, козыри в конце"),
+
     /** Козыри в начале — когда важно сразу видеть, чем крыть. */
     TRUMPS_FIRST("козыри вперёд");
 
     fun sort(cards: List<Card>, trump: Suit): List<Card> = when (this) {
         BY_SUIT -> cards.sortedWith(compareBy({ suitWeight(it.suit, trump) }, { it.rank.value }))
         BY_RANK -> cards.sortedWith(compareBy({ it.rank.value }, { suitWeight(it.suit, trump) }))
+        BY_RANK_TRUMPS_LAST -> cards.sortedWith(
+            compareBy({ if (it.suit == trump) 1 else 0 }, { it.rank.value }),
+        )
         TRUMPS_FIRST -> cards.sortedWith(
             compareBy({ if (it.suit == trump) 0 else 1 }, { it.suit.ordinal }, { it.rank.value }),
         )

@@ -3,28 +3,30 @@ package games.engine
 import kotlin.random.Random
 
 /**
- * Масть. [spoken] — форма для озвучки: «семёрка червей».
+ * Масть. [spoken] — форма для озвучки: «семёрка червей»,
+ * [sign] — значок для нарисованной карты.
  */
-enum class Suit(val spoken: String) {
-    SPADES("пик"),
-    HEARTS("червей"),
-    DIAMONDS("бубён"),
-    CLUBS("треф"),
+enum class Suit(val spoken: String, val sign: String) {
+    SPADES("пик", "♠"),
+    HEARTS("червей", "♥"),
+    DIAMONDS("бубён", "♦"),
+    CLUBS("треф", "♣"),
 }
 
 /**
- * Достоинство. [value] — для сравнения карт, [spoken] — для озвучки.
+ * Достоинство. [value] — для сравнения карт, [spoken] — для озвучки,
+ * [sign] — короткая надпись на нарисованной карте.
  */
-enum class Rank(val value: Int, val spoken: String) {
-    SIX(6, "шестёрка"),
-    SEVEN(7, "семёрка"),
-    EIGHT(8, "восьмёрка"),
-    NINE(9, "девятка"),
-    TEN(10, "десятка"),
-    JACK(11, "валет"),
-    QUEEN(12, "дама"),
-    KING(13, "король"),
-    ACE(14, "туз"),
+enum class Rank(val value: Int, val spoken: String, val sign: String) {
+    SIX(6, "шестёрка", "6"),
+    SEVEN(7, "семёрка", "7"),
+    EIGHT(8, "восьмёрка", "8"),
+    NINE(9, "девятка", "9"),
+    TEN(10, "десятка", "10"),
+    JACK(11, "валет", "В"),
+    QUEEN(12, "дама", "Д"),
+    KING(13, "король", "К"),
+    ACE(14, "туз", "Т"),
 }
 
 /**

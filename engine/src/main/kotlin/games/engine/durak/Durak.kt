@@ -17,9 +17,9 @@ private const val TABLE_LIMIT = 6
 /**
  * Ходы в «Дураке».
  *
- * Отдельного «перевода» здесь нет — в первой версии играем подкидного
- * без перевода (см. SPEC.md). Перевод добавится отдельным ходом, когда
- * решим его включать.
+ * Кроме подкидного здесь есть перевод: защищающийся, пока ни одна карта не
+ * отбита, кладёт свою карту того же достоинства и передаёт атаку соседу.
+ * Правило необязательное — перевести можно, но никто не обязан.
  */
 sealed interface DurakMove : Move {
     /** Положить карту на стол: первый ход или подкидывание. */
@@ -27,6 +27,9 @@ sealed interface DurakMove : Move {
 
     /** Отбиться картой от карты атаки по её номеру на столе. */
     data class Defend(val card: Card, val tableIndex: Int) : DurakMove
+
+    /** Перевести: положить карту того же достоинства и уступить атаку соседу. */
+    data class Transfer(val card: Card) : DurakMove
 
     /** Забрать всё со стола. */
     data object Take : DurakMove
@@ -41,16 +44,25 @@ data class Battle(val attack: Card, val defense: Card? = null) {
 }
 
 /**
- * «Дурак» подкидной, 36 карт, от двух игроков.
+ * «Дурак» подкидной с переводом, 36 карт.
  *
- * Два правила, о которых легко споткнуться, поэтому они явно зашиты
+ * Три правила, о которых легко споткнуться, поэтому они явно зашиты
  * в код и вынесены сюда:
  *
  * 1. Кто отбился — тот и атакует в следующем раунде. Защищающийся,
  *    который забрал карты, свою атаку пропускает: ходит снова тот же
  *    игрок. Это классический вариант для игры вдвоём.
- * 2. Раунд кончается только явно — «бито» или «беру». Пока стол не
- *    закрыт, атакующий может подкидывать.
+ * 2. Ходы за столом чередуются: положил карту — защищающийся ответил,
+ *    только потом можно подкидывать. Пока на столе есть неотбитая карта,
+ *    ход защищающегося, и атакующий ждёт. Раунд кончается явно — «бито»
+ *    или «беру».
+ * 3. Перевод — это ход защищающегося, и только пока на столе нет ни
+ *    одной отбитой карты: он кладёт карту того же достоинства, что уже
+ *    на столе, и атакующим становится сам. Отбиваться теперь соседу, и
+ *    уже от всего стола разом. Цепочка переводов не ограничена, пока
+ *    каждому следующему хватает карт. Правило включается настройкой:
+ *    с [transferAllowed] = false выходит «подкидной» дурак, где
+ *    защищающийся только отбивается или берёт.
  *
  * Партия считается оконченной, когда колода пуста и у кого-то кончились
  * карты: он вышел и выиграл, оставшийся с картами — «дурак». Если вышли
@@ -61,6 +73,8 @@ class DurakGame private constructor(
     private val deck: Deck,
     private val hands: MutableList<MutableList<Card>>,
     private var attackerSeat: Int,
+    /** Разрешён ли перевод. Правило партии, а не хода: переключается настройкой. */
+    val transferAllowed: Boolean,
 ) : GameRules<DurakGame> {
 
     val playerCount: Int get() = hands.size
@@ -93,7 +107,20 @@ class DurakGame private constructor(
 
     fun discardSize(): Int = discarded.size
 
+    /**
+     * Карты, которые уже вышли из игры: отбой и то, что лежит на столе.
+     * По ним соперник считает, чего у противника быть не может.
+     */
+    fun playedCards(): List<Card> =
+        discarded + tableCards.flatMap { listOfNotNull(it.attack, it.defense) }
+
     fun handOf(seat: Int): List<Card> = hands[seat].toList()
+
+    /** Колода сверху вниз, как она лежит. Нужно для сохранения партии. */
+    fun deckCards(): List<Card> = deck.toList()
+
+    /** Отбой: карты, ушедшие из игры «бито». */
+    fun discardedCards(): List<Card> = discarded.toList()
 
     /** Козырь есть у руки? Нужно для подсказок вроде «козырей нет». */
     fun hasTrump(seat: Int): Boolean = hands[seat].any { it.suit == trumpSuit }
@@ -113,16 +140,23 @@ class DurakGame private constructor(
                     // Первый ход в раунде — можно любую карту.
                     hand.forEach { moves += DurakMove.Attack(it) }
                 } else {
-                    // Подкидывать можно только те достоинства, что уже на столе,
-                    // и не больше, чем защищающийся способен отбить.
-                    if (tableCards.size < tableLimit()) {
-                        val ranksOnTable = tableCards
-                            .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
-                            .toSet()
-                        hand.filter { it.rank in ranksOnTable }
-                            .forEach { moves += DurakMove.Attack(it) }
+                    // Подкидывать можно, только когда защищающийся отбился от
+                    // всего, что уже лежит на столе. За столом ходы чередуются:
+                    // положил карту — получил ответ — положил следующую. Пока
+                    // лежит неотбитая карта, ход не наш, и второй раз положить
+                    // нельзя. Без этого правила атакующий вываливал на стол
+                    // несколько карт подряд, а защищающийся «молчал», потому
+                    // что приложение честно ждало его хода.
+                    if (unbeaten.isEmpty()) {
+                        if (tableCards.size < tableLimit()) {
+                            val ranksOnTable = tableCards
+                                .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
+                                .toSet()
+                            hand.filter { it.rank in ranksOnTable }
+                                .forEach { moves += DurakMove.Attack(it) }
+                        }
+                        moves += DurakMove.Pass
                     }
-                    if (unbeaten.isEmpty()) moves += DurakMove.Pass
                 }
             }
 
@@ -132,6 +166,22 @@ class DurakGame private constructor(
                         val index = tableCards.indexOf(battle)
                         hand.filter { beats(it, battle.attack) }
                             .forEach { moves += DurakMove.Defend(it, index) }
+                    }
+                    // Перевод: пока не отбита ни одна карта, защищающийся может
+                    // положить свою карту того же достоинства и уступить атаку
+                    // соседу. У соседа должно хватить карт на весь стол вместе
+                    // с этой — иначе перевод был бы способом подсунуть ему
+                    // больше, чем он в силах отбить.
+                    if (transferAllowed && tableCards.all { !it.beaten }) {
+                        val next = (seat + 1) % playerCount
+                        val enoughCards = hands[next].size >= tableCards.size + 1
+                        if (enoughCards) {
+                            val ranksOnTable = tableCards
+                                .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
+                                .toSet()
+                            hand.filter { it.rank in ranksOnTable }
+                                .forEach { moves += DurakMove.Transfer(it) }
+                        }
                     }
                     moves += DurakMove.Take
                 }
@@ -153,6 +203,14 @@ class DurakGame private constructor(
             is DurakMove.Defend -> {
                 hands[seat].remove(move.card)
                 tableCards[move.tableIndex] = tableCards[move.tableIndex].copy(defense = move.card)
+            }
+
+            is DurakMove.Transfer -> {
+                hands[seat].remove(move.card)
+                tableCards += Battle(move.card)
+                // Атака перешла тому, кто перевёл: отбивается теперь сосед,
+                // а прежний атакующий встал на его место.
+                attackerSeat = seat
             }
 
             DurakMove.Take -> {
@@ -242,6 +300,7 @@ class DurakGame private constructor(
     override fun describe(state: DurakGame, seat: Int, move: Move): String = when (move) {
         is DurakMove.Attack -> "Сыграна ${move.card.spoken()}."
         is DurakMove.Defend -> "Отбито картой ${move.card.spoken()}."
+        is DurakMove.Transfer -> "Переведено картой ${move.card.spoken()}."
         DurakMove.Take -> "Карты со стола забраны."
         DurakMove.Pass -> "Бито, стол ушёл в отбой."
         else -> "Ход сделан."
@@ -266,7 +325,11 @@ class DurakGame private constructor(
          * по нижней карте. Первым ходит тот, у кого младший козырь;
          * если козырей ни у кого нет — как решит жребий.
          */
-        fun start(random: Random = Random.Default, playerCount: Int = 2): DurakGame {
+        fun start(
+            random: Random = Random.Default,
+            playerCount: Int = 2,
+            transferAllowed: Boolean = true,
+        ): DurakGame {
             require(playerCount in 2..6) { "от двух до шести игроков" }
 
             val deck = Deck(fullDeck36()).also { it.shuffle(random) }
@@ -281,7 +344,36 @@ class DurakGame private constructor(
                 .minByOrNull { seat -> hands[seat].filter { it.suit == trumpSuit }.minOf { it.rank.value } }
                 ?: random.nextInt(playerCount)
 
-            return DurakGame(trumpSuit, deck, hands, attacker)
+            return DurakGame(trumpSuit, deck, hands, attacker, transferAllowed)
+        }
+
+        /**
+         * Восстановить партию из сохранения: колода, руки, стол и отбой
+         * задаются как есть, а кто вышел — пересчитывается тем же
+         * [checkEnd], что и в живой игре. Так в файле не приходится
+         * держать «партия окончена» отдельным полем, которое может
+         * разойтись с настоящим положением дел.
+         */
+        fun restore(
+            trumpSuit: Suit,
+            deck: List<Card>,
+            hands: List<List<Card>>,
+            attacker: Int,
+            table: List<Battle> = emptyList(),
+            discarded: List<Card> = emptyList(),
+            transferAllowed: Boolean = true,
+        ): DurakGame {
+            val game = DurakGame(
+                trumpSuit = trumpSuit,
+                deck = Deck(deck),
+                hands = hands.map { it.toMutableList() }.toMutableList(),
+                attackerSeat = attacker,
+                transferAllowed = transferAllowed,
+            )
+            game.tableCards += table
+            game.discarded += discarded
+            game.checkEnd()
+            return game
         }
 
         /** Партия с заданными руками — для тестов и разбора ситуаций. */
@@ -290,11 +382,13 @@ class DurakGame private constructor(
             hands: List<List<Card>>,
             deck: List<Card> = emptyList(),
             attacker: Int = 0,
+            transferAllowed: Boolean = true,
         ): DurakGame = DurakGame(
             trumpSuit = trumpSuit,
             deck = Deck(deck),
             hands = hands.map { it.toMutableList() }.toMutableList(),
             attackerSeat = attacker,
+            transferAllowed = transferAllowed,
         )
     }
 }

@@ -70,11 +70,15 @@ class DurakGameTest {
         )
         game.apply(0, DurakMove.Attack(c(Rank.SEVEN, Suit.HEARTS)))
 
+        // Пока семёрка не отбита, подкидывать нечего — ход защищающегося.
+        assertTrue(game.legalMoves(0).isEmpty())
+
+        game.apply(1, DurakMove.Defend(c(Rank.EIGHT, Suit.HEARTS), 0))
+
         val moves = game.legalMoves(0)
         assertTrue(moves.contains(DurakMove.Attack(c(Rank.SEVEN, Suit.CLUBS))))
         assertFalse(moves.contains(DurakMove.Attack(c(Rank.ACE, Suit.CLUBS))))
-        // «Бито» рано: карта ещё не отбита.
-        assertFalse(moves.contains(DurakMove.Pass))
+        assertTrue(moves.contains(DurakMove.Pass), "стол отбит — можно сказать «бито»")
     }
 
     @Test
@@ -145,6 +149,37 @@ class DurakGameTest {
         assertTrue(game.finished)
         assertEquals(1, game.winner, "вышел защищающийся — он и выиграл")
         assertEquals(0, game.loser, "у атакующего осталась карта — он дурак")
+    }
+
+    @Test
+    fun `подкидывать нельзя, пока защищающийся не отбился`() {
+        // Ситуация со скриншота владельца: шестёрка отбита королём, вторая
+        // шестёрка лежит неотбитой — и второй раз положить карту игрок не
+        // может. Раньше мог, и на столе копились неотбитые карты, а бот при
+        // этом «молчал»: приложение честно ждало, пока игрок закончит
+        // подкидывать. За столом так не бывает: ходы чередуются.
+        val game = DurakGame.forTesting(
+            trumpSuit = Suit.CLUBS,
+            hands = listOf(
+                listOf(c(Rank.SIX, Suit.HEARTS), c(Rank.SIX, Suit.DIAMONDS), c(Rank.KING, Suit.DIAMONDS)),
+                listOf(c(Rank.KING, Suit.HEARTS), c(Rank.SIX, Suit.CLUBS)),
+            ),
+        )
+        game.apply(0, DurakMove.Attack(c(Rank.SIX, Suit.HEARTS)))
+
+        assertTrue(
+            game.legalMoves(0).isEmpty(),
+            "пока шестёрка не отбита, у атакующего ходов нет — и «бито» тоже нельзя",
+        )
+        assertTrue(game.legalMoves(1).isNotEmpty(), "ход у защищающегося")
+
+        game.apply(1, DurakMove.Defend(c(Rank.KING, Suit.HEARTS), 0))
+
+        assertTrue(
+            game.legalMoves(0).contains(DurakMove.Attack(c(Rank.SIX, Suit.DIAMONDS))),
+            "стол отбит — подкидывать шестёрку снова можно",
+        )
+        assertTrue(game.legalMoves(0).contains(DurakMove.Pass))
     }
 
     @Test
