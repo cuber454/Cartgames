@@ -1,5 +1,6 @@
 package games.cardgames.durak
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import games.cardgames.speech.Speaker
 import games.engine.Card
+import games.engine.HandOrder
 import games.engine.durak.DurakGame
 import games.engine.durak.DurakMove
 import kotlinx.coroutines.delay
@@ -39,6 +41,24 @@ private const val BOT = 1
 /** Пауза перед ходом бота, чтобы не тараторил. */
 private const val BOT_DELAY_MS = 700L
 
+private const val PREFS = "durak"
+private const val KEY_ORDER = "hand_order"
+
+/** Порядок карт запоминаем между запусками: он не должен сбрасываться. */
+private fun loadOrder(context: Context): HandOrder {
+    val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString(KEY_ORDER, null)
+        ?: return HandOrder.BY_SUIT
+    return runCatching { HandOrder.valueOf(saved) }.getOrDefault(HandOrder.BY_SUIT)
+}
+
+private fun saveOrder(context: Context, order: HandOrder) {
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_ORDER, order.name)
+        .apply()
+}
+
 @Composable
 fun DurakScreen(onExit: () -> Unit) {
     val context = LocalContext.current
@@ -46,8 +66,11 @@ fun DurakScreen(onExit: () -> Unit) {
     DisposableEffect(Unit) { onDispose { speaker.shutdown() } }
 
     val game = remember { DurakGame.start() }
+    var order by remember { mutableStateOf(loadOrder(context)) }
     var tick by remember { mutableIntStateOf(0) }
-    var lastPhrase by remember { mutableStateOf("Раздача. Ходит тот, у кого младший козырь.") }
+    var lastPhrase by remember {
+        mutableStateOf("Раздача. Ходит тот, у кого младший козырь. Порядок карт: ${order.title}.")
+    }
     var finishSaid by remember { mutableStateOf(false) }
 
     fun say(text: String) {
@@ -121,6 +144,10 @@ fun DurakScreen(onExit: () -> Unit) {
 
     val moves = game.legalMoves(PLAYER)
 
+    // Рука в том порядке, который выбрал игрок: он же и произносится,
+    // и в нём же идут кнопки.
+    val hand = order.sort(game.handOf(PLAYER), game.trumpSuit)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -152,7 +179,7 @@ fun DurakScreen(onExit: () -> Unit) {
         Text("Твои карты:", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
 
-        game.handOf(PLAYER).forEach { card ->
+        hand.forEach { card ->
             val label = card.spoken()
             Button(
                 onClick = { playCard(card) },
@@ -166,8 +193,23 @@ fun DurakScreen(onExit: () -> Unit) {
         }
 
         Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                val next = order.next()
+                order = next
+                saveOrder(context, next)
+                say("Порядок карт: ${next.title}.")
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Порядок: ${order.title}")
+        }
+
+        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { say("На руке: " + game.spokenHand(PLAYER) + ".") }) { Text("Что на руке") }
+            Button(onClick = { say("На руке: " + hand.joinToString(", ") { it.spoken() } + ".") }) {
+                Text("Что на руке")
+            }
             Button(onClick = { say("На столе: " + game.spokenTable() + ".") }) { Text("Что на столе") }
         }
         Spacer(Modifier.height(8.dp))
