@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Опора на системную тему: приложение целиком на Compose. -->
+    <style name="Theme.CardGames" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
