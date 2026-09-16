@@ -1,5 +1,6 @@
 package games.cardgames.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -36,8 +40,10 @@ import games.engine.Suit
  * а для слабовидящего это важнее красоты.
  *
  * Карта устроена как настоящая: метка в двух углах (чтобы читалась и
- * вверх ногами), у номерных карт масти разложены по лицу, у туза одна
- * большая масть, у валета, дамы и короля — крупная буква.
+ * вверх ногами), у номерных карт масти разложены по лицу и в нижней
+ * половине перевёрнуты — как в настоящей колоде, у туза одна большая
+ * масть, у валета, дамы и короля — крупная буква. Буквы русские (Т, К, Д,
+ * В): приложение называет карты по-русски, и на русской колоде буквы те же.
  *
  * Карта — только картинка: озвучку даёт подпись рядом. Поэтому вся
  * разметка внутри закрыта от скринридера ([clearAndSetSemantics]) —
@@ -52,7 +58,7 @@ private val BlackSuit = Color(0xFF101010)
 private val COLUMN_LEFT = 0.34f
 private val COLUMN_RIGHT = 0.66f
 private val ROWS_THREE = listOf(0.30f, 0.50f, 0.70f)
-private val ROWS_FOUR = listOf(0.30f, 0.43f, 0.57f, 0.70f)
+private val ROWS_FOUR = listOf(0.28f, 0.42f, 0.58f, 0.72f)
 
 @Composable
 fun CardFace(
@@ -67,6 +73,7 @@ fun CardFace(
     }
     val shape = RoundedCornerShape(6.dp)
     val cornerSize = (height.value * 0.12f).sp
+    val cornerSuit = (height.value * 0.14f).dp
 
     Box(
         modifier = modifier
@@ -78,12 +85,19 @@ fun CardFace(
         FaceOf(card, ink, width, height)
 
         // Метка в левом верхнем углу — как на настоящей карте.
-        CornerMark(card, ink, cornerSize, Modifier.align(Alignment.TopStart).padding(4.dp))
+        CornerMark(
+            card = card,
+            ink = ink,
+            rankSize = cornerSize,
+            suitSize = cornerSuit,
+            modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+        )
         // И она же перевёрнутая в правом нижнем: карту видно с любой стороны.
         CornerMark(
             card = card,
             ink = ink,
-            size = cornerSize,
+            rankSize = cornerSize,
+            suitSize = cornerSuit,
             modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).rotate(180f),
         )
     }
@@ -94,7 +108,7 @@ fun CardFace(
 private fun FaceOf(card: Card, ink: Color, width: Dp, height: Dp) {
     when {
         card.rank == Rank.ACE -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(card.suit.sign, color = ink, fontSize = (height.value * 0.42f).sp)
+            SuitSign(card.suit, ink, (height.value * 0.38f).dp)
         }
 
         card.rank.value in 6..10 -> PipField(card, ink, width, height)
@@ -110,7 +124,7 @@ private fun FaceOf(card: Card, ink: Color, width: Dp, height: Dp) {
                 fontSize = (height.value * 0.30f).sp,
                 fontWeight = FontWeight.Bold,
             )
-            Text(card.suit.sign, color = ink, fontSize = (height.value * 0.20f).sp)
+            SuitSign(card.suit, ink, (height.value * 0.22f).dp)
         }
     }
 }
@@ -118,18 +132,20 @@ private fun FaceOf(card: Card, ink: Color, width: Dp, height: Dp) {
 /** Масти, разложенные по лицу карты, как в настоящей колоде. */
 @Composable
 private fun PipField(card: Card, ink: Color, width: Dp, height: Dp) {
-    val pip = (width.value * 0.24f).dp
-    val pipSize = (width.value * 0.19f).sp
+    val pip = (width.value * 0.19f).dp
 
     Box(Modifier.fillMaxSize()) {
         pipLayout(card.rank).forEach { (fx, fy) ->
             Box(
                 modifier = Modifier
                     .offset(x = width * fx - pip / 2, y = height * fy - pip / 2)
-                    .size(pip),
+                    .size(pip)
+                    // Нижняя половина карты — та же верхняя, но вверх ногами:
+                    // так на настоящей карте, и так сразу видно, где у неё низ.
+                    .rotate(if (fy > 0.5f) 180f else 0f),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(card.suit.sign, color = ink, fontSize = pipSize)
+                SuitSign(card.suit, ink, pip)
             }
         }
     }
@@ -154,7 +170,7 @@ private fun pipLayout(rank: Rank): List<Pair<Float, Float>> {
 
         Rank.TEN ->
             ROWS_FOUR.flatMap { y -> columns.map { x -> x to y } } +
-                listOf(middle to 0.43f, middle to 0.57f)
+                listOf(middle to 0.42f, middle to 0.58f)
 
         else -> emptyList()
     }
@@ -162,15 +178,82 @@ private fun pipLayout(rank: Rank): List<Pair<Float, Float>> {
 
 /** Угловая метка: достоинство над мастью. */
 @Composable
-private fun CornerMark(card: Card, ink: Color, size: TextUnit, modifier: Modifier) {
+private fun CornerMark(card: Card, ink: Color, rankSize: TextUnit, suitSize: Dp, modifier: Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = card.rank.sign,
             color = ink,
-            fontSize = size,
-            lineHeight = size,
+            fontSize = rankSize,
+            lineHeight = rankSize,
             fontWeight = FontWeight.Bold,
         )
-        Text(text = card.suit.sign, color = ink, fontSize = size, lineHeight = size)
+        SuitSign(card.suit, ink, suitSize)
+    }
+}
+
+/**
+ * Значок масти, нарисованный нами, а не взятый из шрифта.
+ *
+ * В шрифте ♠♥♦♣ — символы Юникода с двумя начертаниями, текстовым и
+ * эмодзи, и Android нередко выбирает эмодзи. Цветной эмодзи перекрасить
+ * нельзя: наш красный и чёрный к нему не применяются, и на карте вместо
+ * масти оказывается глянцевое сердечко из мессенджера. Нарисованный
+ * значок ведёт себя как всё остальное на карте: наш цвет, наша толщина,
+ * чёткий на любом размере.
+ */
+@Composable
+private fun SuitSign(suit: Suit, ink: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        drawPath(suitPath(suit, this.size.minDimension), ink)
+    }
+}
+
+/** Контур масти в квадрате со стороной [s]: доли от 0 до 1. */
+private fun suitPath(suit: Suit, s: Float): Path {
+    fun x(v: Float) = v * s
+    fun y(v: Float) = v * s
+    return Path().apply {
+        when (suit) {
+            // Сердце: две доли сверху, острие снизу.
+            Suit.HEARTS -> {
+                moveTo(x(0.50f), y(0.98f))
+                cubicTo(x(0.06f), y(0.62f), x(0.02f), y(0.34f), x(0.24f), y(0.17f))
+                cubicTo(x(0.40f), y(0.05f), x(0.50f), y(0.16f), x(0.50f), y(0.30f))
+                cubicTo(x(0.50f), y(0.16f), x(0.60f), y(0.05f), x(0.76f), y(0.17f))
+                cubicTo(x(0.98f), y(0.34f), x(0.94f), y(0.62f), x(0.50f), y(0.98f))
+            }
+
+            // Бубна: ромб.
+            Suit.DIAMONDS -> {
+                moveTo(x(0.50f), y(0.02f))
+                lineTo(x(0.96f), y(0.50f))
+                lineTo(x(0.50f), y(0.98f))
+                lineTo(x(0.04f), y(0.50f))
+            }
+
+            // Пика: перевёрнутое сердце с ножкой.
+            Suit.SPADES -> {
+                moveTo(x(0.50f), y(0.02f))
+                cubicTo(x(0.50f), y(0.30f), x(0.04f), y(0.48f), x(0.04f), y(0.70f))
+                cubicTo(x(0.04f), y(0.86f), x(0.20f), y(0.92f), x(0.34f), y(0.84f))
+                lineTo(x(0.27f), y(1.00f))
+                lineTo(x(0.73f), y(1.00f))
+                lineTo(x(0.66f), y(0.84f))
+                cubicTo(x(0.80f), y(0.92f), x(0.96f), y(0.86f), x(0.96f), y(0.70f))
+                cubicTo(x(0.96f), y(0.48f), x(0.50f), y(0.30f), x(0.50f), y(0.02f))
+            }
+
+            // Трефа: три круга и ножка.
+            Suit.CLUBS -> {
+                addOval(Rect(center = Offset(x(0.50f), y(0.28f)), radius = 0.24f * s))
+                addOval(Rect(center = Offset(x(0.26f), y(0.60f)), radius = 0.24f * s))
+                addOval(Rect(center = Offset(x(0.74f), y(0.60f)), radius = 0.24f * s))
+                moveTo(x(0.40f), y(0.62f))
+                lineTo(x(0.60f), y(0.62f))
+                lineTo(x(0.67f), y(1.00f))
+                lineTo(x(0.33f), y(1.00f))
+            }
+        }
+        close()
     }
 }
