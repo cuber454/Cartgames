@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +45,8 @@ import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
+import games.cardgames.ui.TableGesture
+import games.cardgames.ui.tableGestures
 import games.engine.Card as EngineCard
 import games.engine.thousand.Phase
 import games.engine.thousand.RoundSummary
@@ -409,9 +411,43 @@ fun ThousandScreen(
         }
     }.toSet()
 
+    // Карта, до которой игрок дошёл двумя пальцами. Это не выбор карты,
+    // а её чтение: сыграть можно по-прежнему только нажатием. Сбрасывается
+    // на каждом ходу — рука меняется, и старый номер в ней ничего не значит.
+    var cursor by remember(hand) { mutableStateOf(-1) }
+
+    /**
+     * Шаг по руке вправо-влево. С какого места ни начни — карта называется
+     * целиком: тем, кто слушает, номер без названия не говорит ничего, а
+     * «подходит или нет» — это и есть ответ на вопрос «чем мне ходить».
+     */
+    fun walkHand(step: Int) {
+        if (hand.isEmpty()) {
+            voice.sayRequested("Карт на руке нет.")
+            return
+        }
+        val next = if (cursor < 0) {
+            if (step > 0) 0 else hand.size - 1
+        } else {
+            (cursor + step + hand.size) % hand.size
+        }
+        cursor = next
+        val card = hand[next]
+        val fits = if (card in playable) "подходит" else "не подходит"
+        voice.sayRequested("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // Жесты — поверх всего экрана и до отступов: считаем ход пальцев
+            // от краёв экрана, а не от краёв отрисованной области.
+            .tableGestures { gesture ->
+                when (gesture) {
+                    TableGesture.NEXT_CARD -> walkHand(1)
+                    TableGesture.PREV_CARD -> walkHand(-1)
+                }
+            }
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         // --- Верх: только короткое ----------------------------------------
@@ -443,13 +479,14 @@ fun ThousandScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(hand) { card ->
+                itemsIndexed(hand) { index, card ->
                     HandCard(
                         card = card,
                         playable = card in playable,
                         cardWidth = cardWidth,
                         cardHeight = cardHeight,
                         largeText = settings.largeText,
+                        selected = cursor == index,
                         onClick = { tapCard(card) },
                     )
                 }

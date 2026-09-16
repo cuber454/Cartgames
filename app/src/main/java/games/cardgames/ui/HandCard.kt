@@ -1,10 +1,12 @@
 package games.cardgames.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -26,6 +28,10 @@ import games.engine.Card as EngineCard
  *
  * Общая на обе игры: подпись «не подходит» — это не оформление, а то, ради
  * чего карта вообще подписана. Разойтись по двум экранам она не должна.
+ *
+ * [selected] — карта, до которой игрок дошёл жестом и которую сейчас
+ * слышит. Отмечена рамкой, а не только голосом: карту называет речь, но
+ * тому, кто видит экран плохо, нужно ещё и видеть, где он остановился.
  */
 @Composable
 fun HandCard(
@@ -34,13 +40,25 @@ fun HandCard(
     cardWidth: Dp,
     cardHeight: Dp,
     largeText: Boolean,
+    selected: Boolean = false,
     onClick: () -> Unit,
 ) {
     Card(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .alpha(if (playable) 1f else 0.45f),
+            .alpha(if (playable) 1f else 0.45f)
+            .then(
+                if (selected) {
+                    Modifier.border(
+                        width = 3.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         Column(
             modifier = Modifier
