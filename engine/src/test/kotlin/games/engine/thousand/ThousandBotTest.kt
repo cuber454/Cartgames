@@ -7,6 +7,7 @@ import games.engine.Suit
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -79,6 +80,27 @@ class ThousandBotTest {
     }
 
     @Test
+    fun `снос отдаёт карту из короткой масти, а длинную бережёт`() {
+        // Девятки не стоят ничего, и без счёта мастей бот отдал бы любую.
+        // Но три пики — это будущие взятки, а одинокая черва — нет.
+        val hand = listOf(
+            c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.SPADES),
+            c(Rank.QUEEN, Suit.SPADES), c(Rank.NINE, Suit.HEARTS),
+        )
+        val round = ThousandRound.forTesting(
+            hands = listOf(hand, listOf(c(Rank.NINE, Suit.CLUBS))),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+
+        assertEquals(
+            ThousandMove.Discard(listOf(c(Rank.NINE, Suit.HEARTS))),
+            ThousandBot.chooseMove(round, 0, Difficulty.NORMAL),
+        )
+    }
+
+    @Test
     fun `слабая рука не лезет в торг, сильная называет`() {
         val weak = listOf(
             c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.SPADES),
@@ -137,6 +159,91 @@ class ThousandBotTest {
         assertEquals(Phase.PLAY, round.phase)
         assertEquals(1, round.declarer)
         assertEquals(ThousandMove.Raspis, ThousandBot.chooseMove(round, 1, Difficulty.CLEVER))
+    }
+
+    /**
+     * Стол, на котором памяти есть что сказать: все шесть бубён у бота на
+     * руке, а старшие пики ещё не вышли. Заказчик заходит первым, и снести
+     * ему заказано девятку пик — так у соперника оказывается третья пика,
+     * которую тоже надо помнить.
+     */
+    private fun leadingRound(): ThousandRound {
+        val diamonds = listOf(Rank.NINE, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.TEN, Rank.ACE)
+            .map { c(it, Suit.DIAMONDS) }
+        val spades = listOf(Rank.NINE, Rank.JACK, Rank.QUEEN, Rank.KING)
+            .map { c(it, Suit.SPADES) }
+        val clubs = listOf(Rank.NINE, Rank.JACK, Rank.QUEEN, Rank.KING, Rank.TEN, Rank.ACE)
+            .map { c(it, Suit.CLUBS) }
+        val hearts = listOf(Rank.NINE, Rank.JACK, Rank.QUEEN, Rank.KING)
+            .map { c(it, Suit.HEARTS) }
+
+        val round = ThousandRound.forTesting(hands = listOf(diamonds + spades, clubs + hearts))
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.NINE, Suit.SPADES))))
+        assertEquals(Phase.PLAY, round.phase)
+        return round
+    }
+
+    @Test
+    fun `хитрый ведёт с карты, которую уже некому побить`() {
+        // Буби все на руке — значит, туз бубён верная взятка, и ходить надо
+        // им, а не наугад: такая карта не пропадёт и позже, но пока она
+        // забирает одиннадцать очков наверняка.
+        val round = leadingRound()
+        assertEquals(
+            ThousandMove.Play(c(Rank.ACE, Suit.DIAMONDS)),
+            ThousandBot.chooseMove(round, 0, Difficulty.CLEVER),
+        )
+    }
+
+    @Test
+    fun `обычный заходит с младшей карты длинной масти`() {
+        // Тот же стол без памяти: обычный не знает, что буби уже не побьют,
+        // и заходит девяткой бубён — соперник обязан ответить в масть.
+        val round = leadingRound()
+        assertEquals(
+            ThousandMove.Play(c(Rank.NINE, Suit.DIAMONDS)),
+            ThousandBot.chooseMove(round, 0, Difficulty.NORMAL),
+        )
+    }
+
+    @Test
+    fun `память знает, что вышло, а что ещё может прийти`() {
+        val round = leadingRound()
+        val seen = ThousandBot.Seen(round, 0)
+
+        assertEquals(0, seen.left(Suit.DIAMONDS), "все буби на руке — их больше нет ни у кого")
+        assertTrue(
+            seen.holds(c(Rank.ACE, Suit.DIAMONDS), trump = null),
+            "бубну бить нечем, пока козырь не объявлен",
+        )
+        assertFalse(
+            seen.holds(c(Rank.KING, Suit.SPADES), trump = null),
+            "туз и десятка пик ещё не вышли — короля побьют",
+        )
+        // Снесённая девятка ушла сопернику, и туз с десяткой пик лежат вне
+        // игры: для бота всё это «может прийти», и лишнего он себе не
+        // приписывает.
+        assertEquals(3, seen.left(Suit.SPADES))
+    }
+
+    @Test
+    fun `память не подглядывает в прикуп`() {
+        // Прикуп — закрытая карта даже для того, кто его не взял. Пусть он
+        // лежит в коне и всем виден в коде: считать его своим знанием нельзя,
+        // иначе бот начнёт играть краплёной колодой.
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.SPADES)),
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.JACK, Suit.CLUBS)),
+            ),
+            prikups = listOf(listOf(c(Rank.ACE, Suit.HEARTS)), listOf(c(Rank.TEN, Suit.HEARTS))),
+        )
+        val seen = ThousandBot.Seen(round, 0)
+        assertTrue(seen.unseen.contains(c(Rank.ACE, Suit.HEARTS)), "это не знание бота, а невидимое")
+        assertTrue(seen.unseen.contains(c(Rank.TEN, Suit.HEARTS)))
     }
 
     @Test
