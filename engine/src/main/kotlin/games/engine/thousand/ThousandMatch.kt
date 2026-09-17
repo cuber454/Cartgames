@@ -103,12 +103,17 @@ class ThousandMatch(
 
         // Бочка очков не пишет, пока не одолеет свой заказ. Одолела — матч
         // её. Не одолела — попытка сгорела, а три попытки стоят 120.
+        //
+        // Попытка — это свой кон: бочка взяла игру и не добрала. Кон, который
+        // играл кто-то другой, попытки не тратит: бочка в нём не участвовала
+        // и провалить его не могла, а три чужих кона не должны сбрасывать её
+        // с бочки (THOUSAND.md, 2.8).
         if (barrel != null) {
             if (barrel == declarer && madeIt) {
                 deltas[barrel] = target - scores[barrel]
                 scores[barrel] = target
                 winner = barrel
-            } else {
+            } else if (barrel == declarer) {
                 barrelTries++
                 if (barrelTries >= BARREL_TRIES) {
                     scores[barrel] -= BOLT_PENALTY
@@ -136,12 +141,13 @@ class ThousandMatch(
             }
         }
 
-        // Болт: кон без единой взятки. Севший заказчик его не получает —
-        // он и так записал минус заказ, второй раз наказывать не за что.
+        // Болт: кон без единой взятки — и севшему заказчику тоже. Минус заказ
+        // и болт — разные наказания: первое за недобор, второе за пустой кон,
+        // и книга, по которой сверяли правила, исключения для заказчика не
+        // делает (THOUSAND.md, 2.7).
         for (seat in 0 until playerCount) {
             if (winner != null) break
             if (tricks[seat] > 0) continue
-            if (seat == declarer && !madeIt) continue
             bolts[seat]++
             bolted += seat
             if (bolts[seat] >= BOLTS_TO_PENALTY) {

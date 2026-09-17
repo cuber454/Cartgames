@@ -60,12 +60,15 @@ class ThousandMatchTest {
     }
 
     @Test
-    fun `севший заказчик болта не получает`() {
+    fun `севший заказчик без взяток тоже получает болт`() {
+        // Минус заказ — за недобор, болт — за пустой кон. Это разные
+        // наказания, и севшему заказчику книга исключения не делает.
         val match = ThousandMatch.forTesting(scores = listOf(300, 300))
         val summary = match.play(declarer = 0, bid = 120, points = listOf(95, 20), tricks = listOf(0, 11))
 
-        assertEquals(emptyList(), summary.bolted)
-        assertEquals(0, match.bolts[0])
+        assertEquals(listOf(0), summary.bolted)
+        assertEquals(1, match.bolts[0])
+        assertEquals(180, match.scores[0], "минус заказ болт не отменяет и не удваивает")
     }
 
     @Test
@@ -92,11 +95,23 @@ class ThousandMatchTest {
     @Test
     fun `на бочке очки не пишутся, пока не одолеешь заказ`() {
         val match = ThousandMatch.forTesting(scores = listOf(880, 300), barrelSeat = 0)
-        val summary = match.play(declarer = 1, bid = 100, points = listOf(50, 110), tricks = listOf(5, 6))
+        val summary = match.play(declarer = 0, bid = 100, points = listOf(50, 110), tricks = listOf(5, 6))
 
         assertEquals(0, summary.deltas[0])
         assertEquals(880, match.scores[0])
-        assertEquals(1, match.barrelTries)
+        assertEquals(1, match.barrelTries, "свой кон не одолела — попытка сгорела")
+    }
+
+    @Test
+    fun `кон играл не тот, кто на бочке, — попытка не сгорает`() {
+        // Бочка в этом кону не играла и провалить его не могла: три чужих
+        // кона не должны сбрасывать её с бочки.
+        val match = ThousandMatch.forTesting(scores = listOf(880, 300), barrelSeat = 0, barrelTries = 2)
+        match.play(declarer = 1, bid = 100, points = listOf(50, 110), tricks = listOf(5, 6))
+
+        assertEquals(2, match.barrelTries)
+        assertEquals(0, match.barrelSeat)
+        assertEquals(880, match.scores[0])
     }
 
     @Test
@@ -110,9 +125,9 @@ class ThousandMatchTest {
     }
 
     @Test
-    fun `три провала на бочке — минус сто двадцать и с бочки`() {
+    fun `три своих провала на бочке — минус сто двадцать и с бочки`() {
         val match = ThousandMatch.forTesting(scores = listOf(880, 300), barrelSeat = 0, barrelTries = 2)
-        val summary = match.play(declarer = 1, bid = 100, points = listOf(40, 120), tricks = listOf(4, 7))
+        val summary = match.play(declarer = 0, bid = 100, points = listOf(40, 120), tricks = listOf(4, 7))
 
         assertEquals(listOf(0), summary.barrelsDropped)
         assertNull(match.barrelSeat)
@@ -174,7 +189,7 @@ class ThousandMatchTest {
     }
 
     @Test
-    fun `вдвоём бочка торгуется как все — пас означает провал попытки`() {
+    fun `вдвоём бочка торгуется как все — обязательства на потолок нет`() {
         val two = ThousandRound.forTesting(
             hands = List(2) { listOf(c(Rank.NINE, Suit.SPADES)) },
             barrelSeat = 1,
