@@ -54,7 +54,7 @@ object ThousandBot {
 
         return when (round.phase) {
             Phase.BIDDING -> bid(round, seat, moves, difficulty, random)
-            Phase.PRIKUP -> pickPrikup(round, seat, moves)
+            Phase.PRIKUP -> pickPrikup(moves, random)
             Phase.DISCARD -> discard(round, seat, moves)
             Phase.PLAY -> play(round, seat, moves, memory)
             Phase.OVER -> null
@@ -145,10 +145,22 @@ object ThousandBot {
 
     // --- Прикуп -----------------------------------------------------------
 
-    /** Берём тот прикуп, который больше усиливает руку. */
-    private fun pickPrikup(round: ThousandRound, seat: Int, moves: List<ThousandMove>): ThousandMove {
+    /**
+     * Берём прикуп, не глядя в него, — как берёт игрок.
+     *
+     * Прикуп закрыт для всех: заказчик выбирает из двух пар, не видя ни одной,
+     * и только потом взятую пару открывают обоим. Бот не исключение. Смотреть
+     * в прикуп ему нельзя — это игра краплёной колодой, и заметить её со
+     * стороны нельзя: бот просто «чаще угадывает».
+     *
+     * Выбирать тут нечего: обе пары для бота — одни и те же невидимые карты,
+     * и никакая память о вышедшем этого не меняет. Поэтому выбор случаен, и
+     * уровнем сложности он не лечится: «хитрый» просто знает об этом больше,
+     * а не выбирает лучше.
+     */
+    private fun pickPrikup(moves: List<ThousandMove>, random: Random): ThousandMove {
         val takes = moves.filterIsInstance<ThousandMove.TakePrikups>()
-        return takes.maxByOrNull { handPower(round.handOf(seat) + round.prikup(it.index)) } ?: takes.first()
+        return takes.random(random)
     }
 
     // --- Снос -------------------------------------------------------------
