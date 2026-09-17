@@ -18,6 +18,12 @@ import kotlin.random.Random
  * а по тому, сколько очков бот рассчитывает собрать, и по марьяжам: пара
  * король-дама приносит сорок-сто очков, и это часто больше, чем все взятки
  * кона вместе.
+ *
+ * Уровней три, и различаются они не силой карт, а памятью. «Новичок» ходит
+ * наугад. «Обычный» смотрит только на свою руку: берегут марьяж, сносят
+ * дешёвое, бьют самой дешёвой подходящей картой. «Хитрый» держит в голове
+ * весь стол — что вышло и что ещё нет, — и по этому считает, побьют ли его
+ * карту.
  */
 object ThousandBot {
 
@@ -38,12 +44,56 @@ object ThousandBot {
             return pool[random.nextInt(pool.size)]
         }
 
+        val memory = difficulty == Difficulty.CLEVER
+
         return when (round.phase) {
             Phase.BIDDING -> bid(round, seat, moves, difficulty)
             Phase.PRIKUP -> pickPrikup(round, seat, moves)
             Phase.DISCARD -> discard(round, seat, moves)
-            Phase.PLAY -> play(round, seat, moves)
+            Phase.PLAY -> play(round, seat, moves, memory)
             Phase.OVER -> null
+        }
+    }
+
+    // --- Память -----------------------------------------------------------
+
+    /**
+     * Что бот видел за столом, кроме собственной руки.
+     *
+     * Хранить это отдельно не нужно: кон и так помнит все разыгранные взятки
+     * ([ThousandRound.tricksPlayed]) и карты на столе, а больше ничего и не
+     * надо — остальное даёт полная колода. «Помнит» здесь значит «считает
+     * заново на каждом ходу»: у бота нет своей жизни между ходами, и любая
+     * его память всё равно жила бы в коне.
+     *
+     * В [unseen] попадает и то, чего не видел никто: карты соперника и второй
+     * прикуп, который в розыгрыш не идёт. Для решения это одно и то же —
+     * «может оказаться у соперника», — и считать невидимое его картами
+     * безопасно: своей силы бот не переоценит. А вот подсматривать в прикупы
+     * нельзя, и [Seen] их не читает: взять прикуп можно, смотреть в него —
+     * нет.
+     */
+    internal class Seen(round: ThousandRound, seat: Int) {
+        private val own: List<Card> = round.handOf(seat)
+        private val played: List<Card> =
+            round.tricksPlayed().flatMap { it.cards } + round.tableNow()
+
+        /** Карты, которых бот не видел: рука соперника и то, что вне игры. */
+        val unseen: List<Card> = fullDeck24().filterNot { it in own || it in played }
+
+        /** Сколько карт масти бот ещё не видел. */
+        fun left(suit: Suit): Int = unseen.count { it.suit == suit }
+
+        /**
+         * Никто не побьёт [card]: ни старшей карты той же масти, ни козыря
+         * у соперника не осталось.
+         */
+        fun holds(card: Card, trump: Suit?): Boolean = unseen.none { other ->
+            when {
+                other.suit == card.suit -> other.weight > card.weight
+                trump != null && other.suit == trump -> card.suit != trump
+                else -> false
+            }
         }
     }
 
@@ -56,6 +106,9 @@ object ThousandBot {
      * считает терпимой. Обычный уровень оставляет двадцать пять очков на
      * промах: назвать сто с рукой на сто десять он не станет, потому что
      * взятки ещё надо взять. Хитрый рискует плотнее.
+     *
+     * Себя бот не перебивает не по своей воле: движок просто не даёт назвать
+     * сумму не выше текущей ([ThousandRound.legalMoves]).
      */
     private fun bid(
         round: ThousandRound,
@@ -92,13 +145,21 @@ object ThousandBot {
      */
     private fun discard(round: ThousandRound, seat: Int, moves: List<ThousandMove>): ThousandMove {
         val hand = round.handOf(seat)
+        val trump = round.trumpSuit
         val discards = moves.filterIsInstance<ThousandMove.Discard>()
-        return discards.minByOrNull { option -> option.cards.sumOf { keepingValue(it, hand) } } ?: discards.first()
+        return discards.minByOrNull { option ->
+            option.cards.sumOf { keepingValue(it, hand, trump) }
+        } ?: discards.first()
     }
 
     // --- Розыгрыш ---------------------------------------------------------
 
-    private fun play(round: ThousandRound, seat: Int, moves: List<ThousandMove>): ThousandMove {
+    private fun play(
+        round: ThousandRound,
+        seat: Int,
+        moves: List<ThousandMove>,
+        memory: Boolean,
+    ): ThousandMove {
         // Роспись — до всего остального: если заказ уже не набрать, ходить
         // картой поздно, а расписаться дешевле, чем сесть.
         if (moves.contains(ThousandMove.Raspis) && shouldRaspis(round, seat)) return ThousandMove.Raspis
@@ -115,9 +176,10 @@ object ThousandBot {
         }
         if (plays.isEmpty()) return moves.first()
 
+        val seen = if (memory) Seen(round, seat) else null
         val lead = round.tableNow().firstOrNull()
-            ?: return leading(plays, trump)
-        return answering(round, seat, plays, lead, trump)
+            ?: return leading(plays, trump, seen)
+        return answering(round, seat, plays, lead, trump, seen)
     }
 
     /**
@@ -141,17 +203,35 @@ object ThousandBot {
         return ceiling < round.currentBid
     }
 
-    /** Веду взятку: кладу старшую карту, чтобы её труднее было побить. */
-    private fun leading(plays: List<ThousandMove.Play>, trump: Suit?): ThousandMove {
+    /**
+     * Веду взятку.
+     *
+     * Хитрый первым делом ищет верную взятку: карту, которую уже некому
+     * побить, — и берёт из них самую дорогую. Всё остальное уходит на заход
+     * с младшей карты длинной масти: соперник обязан отвечать в масть, и
+     * такая мелочь вытягивает из него старшие карты, пока свои ещё целы.
+     * Козырь на заход не идёт: он припасён на то, чтобы крыть.
+     */
+    private fun leading(
+        plays: List<ThousandMove.Play>,
+        trump: Suit?,
+        seen: Seen?,
+    ): ThousandMove {
+        if (seen != null) {
+            val sure = plays.filter { it.card.suit != trump && seen.holds(it.card, trump) }
+            sure.maxByOrNull { it.card.points }?.let { return it }
+        }
+
         val plain = plays.filter { it.card.suit != trump }
         val pool = plain.ifEmpty { plays }
-        return pool.maxByOrNull { it.card.weight * 10 + it.card.points } ?: plays.first()
+        return pool.minByOrNull { it.card.weight * 100 + it.card.points } ?: plays.first()
     }
 
     /**
      * Отвечаю на чужую карту. Есть чем бить — бью самым дешёвым: козырь
-     * дороже, поэтому он идёт в ход последним. Нечем — сбрасываю мелочь,
-     * чтобы не отдать сопернику лишних очков.
+     * дороже, поэтому он идёт в ход последним. Хитрый при этом смотрит, не
+     * перебьёт ли его кто-то ещё, и из подходящих выбирает ту, что устоит.
+     * Нечем — сбрасываю мелочь, чтобы не отдать сопернику лишних очков.
      */
     private fun answering(
         round: ThousandRound,
@@ -159,13 +239,18 @@ object ThousandBot {
         plays: List<ThousandMove.Play>,
         lead: Card,
         trump: Suit?,
+        seen: Seen?,
     ): ThousandMove {
         val beating = plays.filter { beats(it.card, lead, trump) }
         if (beating.isNotEmpty()) {
+            if (seen != null) {
+                val sure = beating.filter { seen.holds(it.card, trump) }
+                (sure.ifEmpty { beating }).minByOrNull { cardCost(it.card, trump) }?.let { return it }
+            }
             return beating.minByOrNull { cardCost(it.card, trump) } ?: beating.first()
         }
         val hand = round.handOf(seat)
-        return plays.minByOrNull { keepingValue(it.card, hand) } ?: plays.first()
+        return plays.minByOrNull { keepingValue(it.card, hand, trump) } ?: plays.first()
     }
 
     /** Бьёт ли [card] лежащую [lead] — при объявленном козыре [trump]. */
@@ -181,13 +266,15 @@ object ThousandBot {
      * Сколько очков бот рассчитывает собрать этой рукой.
      *
      * Считаем не по старшинству, а по очкам: сумма карт, полная стоимость
-     * марьяжей (они записываются, даже если карту побьют) и надбавка за
-     * тузов с десятками — это те карты, которые взятку берут чаще прочих.
+     * марьяжей (они записываются, даже если карту побьют), надбавка за
+     * тузов с десятками — это те карты, которые взятку берут чаще прочих, —
+     * и надбавка за длинную масть: с четырёх карт масть уже можно тянуть.
      */
     fun handPower(hand: List<Card>): Int {
         var power = hand.sumOf { it.points }
         Suit.entries.forEach { suit ->
             if (hand.hasMarriage(suit)) power += marriagePoints(suit)
+            if (hand.count { it.suit == suit } >= LONG_SUIT) power += LONG_SUIT_BONUS
         }
         power += hand.count { it.rank == Rank.ACE } * 6
         power += hand.count { it.rank == Rank.TEN } * 4
@@ -195,12 +282,24 @@ object ThousandBot {
     }
 
     /** Чего стоит расстаться с картой: и на снос, и на сброс в взятке. */
-    private fun keepingValue(card: Card, hand: List<Card>): Int {
+    private fun keepingValue(card: Card, hand: List<Card>, trump: Suit?): Int {
         val inMarriage = (card.rank == Rank.KING || card.rank == Rank.QUEEN) && hand.hasMarriage(card.suit)
-        return card.points * 3 + card.weight + if (inMarriage) 50 else 0
+        // Карту из длинной масти берегут: длинная масть — это взятки, а
+        // короткая — то, чем платят за снос. Козырь берегут особо: им кроют.
+        val length = hand.count { it.suit == card.suit }
+        return card.points * 3 + card.weight +
+            if (inMarriage) 50 else 0 +
+            length * 4 +
+            if (card.suit == trump) 20 else 0
     }
 
     /** Чего стоит потратить карту на взятку: козырь придерживаем. */
     private fun cardCost(card: Card, trump: Suit?): Int =
         card.points * 3 + card.weight + if (card.suit == trump) 40 else 0
+
+    /** С какого числа карт масть считается длинной. */
+    private const val LONG_SUIT = 4
+
+    /** Сколько очков она за это добавляет. */
+    private const val LONG_SUIT_BONUS = 10
 }
