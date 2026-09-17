@@ -108,4 +108,45 @@ class ThousandBotTest {
         val move = ThousandBot.chooseMove(round, 0, Difficulty.CLEVER)
         assertTrue(move is ThousandMove.Play, "ожидался ход картой, а не $move")
     }
+
+    /**
+     * Кон, в котором бот — заказчик, а заказ ему не по руке: сто пять при
+     * трёх девятках и валете. Даже по самой щедрой оценке столько не взять.
+     */
+    private fun hopelessContract(): ThousandRound {
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.JACK, Suit.SPADES)),
+                listOf(
+                    c(Rank.NINE, Suit.HEARTS), c(Rank.NINE, Suit.DIAMONDS),
+                    c(Rank.JACK, Suit.HEARTS),
+                ),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Bid(105))
+        round.apply(0, ThousandMove.Pass)
+        round.apply(1, ThousandMove.TakePrikups(0))
+        round.apply(1, ThousandMove.Discard(listOf(c(Rank.JACK, Suit.HEARTS))))
+        return round
+    }
+
+    @Test
+    fun `бот расписывается, когда заказанного не набрать`() {
+        val round = hopelessContract()
+        assertEquals(Phase.PLAY, round.phase)
+        assertEquals(1, round.declarer)
+        assertEquals(ThousandMove.Raspis, ThousandBot.chooseMove(round, 1, Difficulty.CLEVER))
+    }
+
+    @Test
+    fun `новичок не расписывается — он играет картами`() {
+        val round = hopelessContract()
+        repeat(20) {
+            assertTrue(
+                ThousandBot.chooseMove(round, 1, Difficulty.NOVICE) != ThousandMove.Raspis,
+                "роспись — решение на счёт партии, случайным ходом её не выбирают",
+            )
+        }
+    }
 }

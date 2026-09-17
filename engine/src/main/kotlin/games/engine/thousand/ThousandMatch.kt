@@ -32,6 +32,8 @@ data class RoundSummary(
     val barrelSat: Int?,
     /** Кто выиграл матч этим коном. */
     val winner: Int?,
+    /** Кто расписался: кон кончился отказом, а не розыгрышем. */
+    val raspised: Int? = null,
 )
 
 /**
@@ -80,7 +82,7 @@ class ThousandMatch(
         val declarer = checkNotNull(round.declarer) { "кон без заказчика" }
         val points = IntArray(playerCount) { round.roundPoints(it) }
         val tricks = IntArray(playerCount) { round.tricksOf(it) }
-        return record(declarer, round.currentBid, points, tricks)
+        return record(declarer, round.currentBid, points, tricks, round.raspised)
     }
 
     /**
@@ -90,7 +92,13 @@ class ThousandMatch(
      * инструмент проверки: чтобы получить в нём нужный расклад, его надо
      * подобрать, а правила счёта и бочки проверяются именно здесь.
      */
-    internal fun record(declarer: Int, bid: Int, points: IntArray, tricks: IntArray): RoundSummary {
+    internal fun record(
+        declarer: Int,
+        bid: Int,
+        points: IntArray,
+        tricks: IntArray,
+        raspised: Int? = null,
+    ): RoundSummary {
         check(winner == null) { "матч уже выигран" }
         roundsPlayed++
 
@@ -98,7 +106,10 @@ class ThousandMatch(
         val bolted = mutableListOf<Int>()
         val dropped = mutableListOf<Int>()
         val barrel = barrelSeat
-        val madeIt = points[declarer] >= bid
+        // Расписанный кон заказа не выполняет по определению: заказчик от
+        // него отказался. Иначе роспись на бочке с уже набранными очками
+        // засчиталась бы победой.
+        val madeIt = raspised == null && points[declarer] >= bid
         var sat: Int? = null
 
         // Бочка очков не пишет, пока не одолеет свой заказ. Одолела — матч
@@ -131,10 +142,15 @@ class ThousandMatch(
         if (winner == null) {
             for (seat in 0 until playerCount) {
                 if (seat == barrel) continue
-                val delta = if (seat == declarer) {
-                    if (madeIt) bid else -bid
-                } else {
-                    (points[seat] + 2) / 5 * 5
+                val delta = when {
+                    // Роспись считается не по взяткам: заказ пишется с того,
+                    // кто его брал, соперники получают по половине заказа.
+                    // Взятки не доиграны, и очков за них не пишет никто.
+                    raspised != null ->
+                        if (seat == declarer) -bid else ThousandRound.raspisShare(bid)
+
+                    seat == declarer -> if (madeIt) bid else -bid
+                    else -> (points[seat] + 2) / 5 * 5
                 }
                 deltas[seat] = delta
                 scores[seat] += delta
@@ -145,15 +161,19 @@ class ThousandMatch(
         // и болт — разные наказания: первое за недобор, второе за пустой кон,
         // и книга, по которой сверяли правила, исключения для заказчика не
         // делает (THOUSAND.md, 2.7).
-        for (seat in 0 until playerCount) {
-            if (winner != null) break
-            if (tricks[seat] > 0) continue
-            bolts[seat]++
-            bolted += seat
-            if (bolts[seat] >= BOLTS_TO_PENALTY) {
-                scores[seat] -= BOLT_PENALTY
-                deltas[seat] -= BOLT_PENALTY
-                bolts[seat] = 0
+        // Распись болтов не приносит никому: расписанный кон кончился
+        // отказом от игры, а не игрой без взяток (THOUSAND.md, 2.13).
+        if (raspised == null) {
+            for (seat in 0 until playerCount) {
+                if (winner != null) break
+                if (tricks[seat] > 0) continue
+                bolts[seat]++
+                bolted += seat
+                if (bolts[seat] >= BOLTS_TO_PENALTY) {
+                    scores[seat] -= BOLT_PENALTY
+                    deltas[seat] -= BOLT_PENALTY
+                    bolts[seat] = 0
+                }
             }
         }
 
@@ -191,6 +211,7 @@ class ThousandMatch(
             barrelsDropped = dropped,
             barrelSat = sat,
             winner = winner,
+            raspised = raspised,
         )
     }
 

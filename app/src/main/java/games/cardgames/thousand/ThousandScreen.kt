@@ -135,6 +135,9 @@ fun ThousandScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // Открыт ли выбор марьяжа, который хвалим.
     var praiseOpen by remember { mutableStateOf(false) }
+    // Открыт ли вопрос «расписаться?» — роспись кончает кон и спрашивается
+    // отдельно: промахнуться по ней пальцем не должно быть накладно.
+    var raspisOpen by remember { mutableStateOf(false) }
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
@@ -265,6 +268,7 @@ fun ThousandScreen(
         moves.filterIsInstance<ThousandMove.Praise>()
             .forEach { parts += "похвалить ${it.card.suit.spoken}" }
         if (moves.contains(ThousandMove.Pass)) parts += "пас"
+        if (moves.contains(ThousandMove.Raspis)) parts += "расписаться"
         return "Можно: " + parts.joinToString(", ") + "."
     }
 
@@ -556,6 +560,40 @@ fun ThousandScreen(
             Spacer(Modifier.height(8.dp))
         }
 
+        // Роспись стоит отдельно от «Паса» и спрашивается подтверждением:
+        // это не ход, а конец кона, и стоит он заказчику всего заказа.
+        if (moves.contains(ThousandMove.Raspis)) {
+            val share = ThousandRound.raspisShare(round.currentBid)
+            Button(onClick = { raspisOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Расписаться")
+            }
+            Spacer(Modifier.height(8.dp))
+
+            if (raspisOpen) {
+                AlertDialog(
+                    onDismissRequest = { raspisOpen = false },
+                    title = { Text("Расписаться?") },
+                    text = {
+                        Text(
+                            "Заказ ${round.currentBid} не играется: ты пишешь минус " +
+                                "${round.currentBid}, бот плюс $share. Карты не доигрываются.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                raspisOpen = false
+                                play(ThousandMove.Raspis)
+                            },
+                        ) { Text("Расписаться") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { raspisOpen = false }) { Text("Играю") }
+                    },
+                )
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Обе кнопки — вопрос игрока, а не событие за столом: он нажал
             // и ждёт ответа. Отвечаем своим голосом и в том случае, когда
@@ -634,6 +672,7 @@ private fun botPhrase(move: ThousandMove): String = when (move) {
     is ThousandMove.TakePrikups -> "Бот берёт прикуп."
     is ThousandMove.Discard -> "Бот снёс карту."
     is ThousandMove.Praise -> "Бот хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    ThousandMove.Raspis -> "Бот расписывается."
     is ThousandMove.Play -> "Бот кладёт ${move.card.spoken()}."
 }
 
@@ -644,6 +683,7 @@ private fun ownPhrase(move: ThousandMove): String = when (move) {
     is ThousandMove.TakePrikups -> "Берёшь прикуп ${move.index + 1}."
     is ThousandMove.Discard -> "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Praise -> "Хвалишь ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    ThousandMove.Raspis -> "Расписываешься."
     is ThousandMove.Play -> "Кладёшь ${move.card.spoken()}."
 }
 
@@ -687,7 +727,13 @@ private fun roundPhrase(
 ): String {
     val parts = mutableListOf<String>()
     val declarer = round.declarer
-    if (declarer != null) {
+    val scribbler = summary.raspised
+    if (scribbler != null) {
+        // Тут не «набрал столько-то»: при росписи карты не доиграны, и
+        // очки кона ни о чём не говорят. Говорим то, что случилось.
+        val who = if (scribbler == PLAYER) "Ты расписался" else "Бот расписался"
+        parts += "Кон окончен. $who: заказ ${round.currentBid} не играется."
+    } else if (declarer != null) {
         val points = round.roundPoints(declarer)
         val who = if (declarer == PLAYER) "ты" else "бот"
         val done = if (points >= round.currentBid) "Заказ выполнен." else "Заказ не выполнен."

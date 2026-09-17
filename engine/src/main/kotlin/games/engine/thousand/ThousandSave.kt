@@ -53,6 +53,7 @@ object ThousandSave {
         appendLine("first ${round.firstBidderSeat()}")
         appendLine("bid ${round.currentBid}")
         appendLine("declarer ${round.declarer?.toString() ?: DASH}")
+        appendLine("raspis ${round.raspised?.toString() ?: DASH}")
         appendLine("trump ${round.trumpSuit?.let(::letterOf) ?: DASH}")
         appendLine("passed ${round.passedSeats().joinToString(" ")}")
         appendLine("named ${round.namedSeats().joinToString(" ")}")
@@ -63,8 +64,16 @@ object ThousandSave {
         for (seat in 0 until round.playerCount) {
             appendLine("hand$seat ${round.handOf(seat).joinToString(" ") { codeOf(it) }}")
         }
+        // Взятый прикуп и в руке, и в своей строке — это одни и те же карты
+        // дважды. При чтении они сложились бы в 25 карт, и запись отверглась
+        // бы целиком: партия, брошенная посреди розыгрыша, не поднялась бы
+        // вовсе. Поэтому в прикупной строке остаётся только то, что ещё
+        // лежит на столе, — нетронутый прикуп или его остаток.
+        val inPlay = (0 until round.playerCount).flatMap { round.handOf(it) } +
+            round.tableSeats().map { it.second }
         for (index in 0 until round.prikupCount) {
-            appendLine("prikup$index ${round.prikup(index).joinToString(" ") { codeOf(it) }}")
+            val left = round.prikup(index).filterNot { it in inPlay }
+            appendLine("prikup$index ${left.joinToString(" ") { codeOf(it) }}")
         }
         round.tableSeats().forEach { (seat, card) ->
             appendLine("table $seat:${codeOf(card)}")
@@ -133,6 +142,7 @@ object ThousandSave {
         if (first !in 0 until playerCount) return null
         val bid = fields["bid"]?.toIntOrNull() ?: return null
         val declarer = parseIntOrNull(fields["declarer"])
+        val raspised = parseIntOrNull(fields["raspis"])?.takeIf { it in 0 until playerCount }
         val trump = parseSuitOrNull(fields["trump"])
         val barrel = parseIntOrNull(fields["barrel"])
         val barrelTries = fields["barreltries"]?.toIntOrNull() ?: return null
@@ -162,6 +172,7 @@ object ThousandSave {
             tricks = tricks,
             table = table,
             barrelSeat = barrel,
+            raspised = raspised,
         )
 
         val match = ThousandMatch.restore(

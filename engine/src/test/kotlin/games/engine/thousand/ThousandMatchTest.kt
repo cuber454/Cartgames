@@ -189,6 +189,44 @@ class ThousandMatchTest {
     }
 
     @Test
+    fun `роспись пишет заказ заказчику и половину соперникам, болтов не даёт`() {
+        // Взяток нет ни у кого: кон кончился отказом, а не игрой, и болт за
+        // такое никому не пишется.
+        val match = ThousandMatch.forTesting(scores = listOf(200, 200))
+        val summary = match.record(0, bid = 105, points = intArrayOf(15, 20), tricks = intArrayOf(0, 0), raspised = 0)
+
+        assertEquals(listOf(-105, 50), summary.deltas)
+        assertEquals(listOf(95, 250), match.scores.toList())
+        assertEquals(emptyList(), summary.bolted)
+        assertEquals(listOf(0, 0), match.bolts.toList())
+        assertEquals(0, summary.raspised)
+    }
+
+    @Test
+    fun `роспись на бочке попытку сжигает, но победой не становится`() {
+        // На бочке 120 уже набрано, и заказчик мог бы «выиграть» росписью,
+        // если считать её по набранным очкам. Не считаем: от заказа он
+        // отказался, попытка сгорела.
+        val match = ThousandMatch.forTesting(scores = listOf(880, 300), barrelSeat = 0)
+        val summary = match.record(0, bid = 120, points = intArrayOf(120, 0), tricks = intArrayOf(6, 5), raspised = 0)
+
+        assertEquals(1, match.barrelTries)
+        assertEquals(880, match.scores[0], "бочка очков не пишет")
+        assertEquals(null, summary.winner)
+        assertEquals(0, summary.raspised)
+    }
+
+    @Test
+    fun `расписался защитник — заказ всё равно пишется заказчику`() {
+        // Роспись — это заказчик отказывается от своего заказа. Заказчик
+        // тут другой, и записанное берётся с него.
+        val match = ThousandMatch.forTesting(scores = listOf(200, 200))
+        val summary = match.record(0, bid = 100, points = intArrayOf(10, 30), tricks = intArrayOf(0, 0), raspised = 1)
+
+        assertEquals(listOf(-100, 50), summary.deltas)
+    }
+
+    @Test
     fun `вдвоём бочка торгуется как все — обязательства на потолок нет`() {
         val two = ThousandRound.forTesting(
             hands = List(2) { listOf(c(Rank.NINE, Suit.SPADES)) },

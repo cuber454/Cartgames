@@ -331,8 +331,12 @@ class ThousandRoundTest {
             round.handOf(1).contains(c(Rank.KING, Suit.HEARTS)),
             "объявление марьяжа — это и есть ход: король уже на столе",
         )
-        // На черву у заказчика есть туз — обязан положить его.
-        assertEquals(listOf(ThousandMove.Play(c(Rank.ACE, Suit.HEARTS))), round.legalMoves(0))
+        // На черву у заказчика есть туз — обязан положить его. Расписаться
+        // он тоже может: заказчик в розыгрыше, а роспись — его право.
+        assertEquals(
+            listOf(ThousandMove.Play(c(Rank.ACE, Suit.HEARTS)), ThousandMove.Raspis),
+            round.legalMoves(0),
+        )
         round.apply(0, ThousandMove.Play(c(Rank.ACE, Suit.HEARTS)))
 
         // Третья взятка: заказчик заходит девяткой пик, червей у него нет,
@@ -383,5 +387,64 @@ class ThousandRoundTest {
         assertEquals(-100, deltas[0], "не добрал — минус заказ")
         assertEquals(115, deltas[1], "сто четырнадцать округляется до ста пятнадцати")
         assertTrue(round.bolted().isEmpty(), "взятки взяли оба")
+    }
+
+    @Test
+    fun `расписаться может только заказчик и только в розыгрыше`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.NINE, Suit.SPADES)),
+                listOf(c(Rank.ACE, Suit.CLUBS), c(Rank.ACE, Suit.SPADES)),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        assertFalse(
+            round.legalMoves(1).contains(ThousandMove.Raspis),
+            "в торге расписываться нечем: заказа ещё нет",
+        )
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        assertFalse(
+            round.legalMoves(0).contains(ThousandMove.Raspis),
+            "до розыгрыша заказ ещё не проигран",
+        )
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.NINE, Suit.CLUBS))))
+
+        assertTrue(round.legalMoves(0).contains(ThousandMove.Raspis), "заказчику есть чем расписаться")
+        round.apply(0, ThousandMove.Play(c(Rank.NINE, Suit.SPADES)))
+        assertFalse(
+            round.legalMoves(1).contains(ThousandMove.Raspis),
+            "защитник чужой заказ не расписывает",
+        )
+    }
+
+    @Test
+    fun `роспись кончает кон — заказчик пишет заказ, сопернику половина`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.NINE, Suit.SPADES)),
+                listOf(c(Rank.ACE, Suit.CLUBS), c(Rank.ACE, Suit.SPADES)),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.NINE, Suit.CLUBS))))
+        round.apply(0, ThousandMove.Raspis)
+
+        assertEquals(Phase.OVER, round.phase)
+        assertEquals(0, round.raspised)
+        val deltas = round.deltas()
+        assertEquals(-100, deltas[0], "роспись — весь заказ заказчику")
+        assertEquals(50, deltas[1], "и половина заказа защитнику")
+        assertTrue(round.bolted().isEmpty(), "расписанный кон болтов не приносит: взяток в нём нет ни у кого")
+    }
+
+    @Test
+    fun `половина заказа округляется вниз до пяти`() {
+        assertEquals(50, ThousandRound.raspisShare(100))
+        assertEquals(50, ThousandRound.raspisShare(105), "пятьдесят два с половиной — не очко за столом")
+        assertEquals(55, ThousandRound.raspisShare(115))
+        assertEquals(60, ThousandRound.raspisShare(120))
     }
 }

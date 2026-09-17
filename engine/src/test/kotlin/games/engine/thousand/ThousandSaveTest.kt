@@ -99,4 +99,53 @@ class ThousandSaveTest {
         assertEquals(2, saved.match.bolts[1])
         assertTrue(saved.round.isFinished(saved.round) == false)
     }
+
+    /** Раздача целиком: десять на десять и два прикупа по две — все 24 карты. */
+    private fun dealtRound(): ThousandRound {
+        val deck = fullDeck24()
+        return ThousandRound.forTesting(
+            hands = listOf(deck.subList(0, 10).toList(), deck.subList(10, 20).toList()),
+            prikups = listOf(deck.subList(20, 22).toList(), deck.subList(22, 24).toList()),
+        )
+    }
+
+    @Test
+    fun `партия, брошенная посреди розыгрыша, поднимается`() {
+        // Взятый прикуп лежит в руке заказчика. Если записать его ещё и
+        // прикупной строкой, при чтении карты посчитаются дважды, и партия
+        // не поднимется вовсе — а пишется она после каждого хода.
+        val round = dealtRound()
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(round.handOf(0).take(1)))
+        round.apply(0, ThousandMove.Play(round.handOf(0).first()))
+
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0))
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, round)))
+        assertEquals(round.handOf(0), saved.round.handOf(0))
+        assertEquals(round.handOf(1), saved.round.handOf(1))
+        assertEquals(round.tableSeats(), saved.round.tableSeats())
+    }
+
+    @Test
+    fun `расписанный кон переживает запись на диск`() {
+        val round = dealtRound()
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(round.handOf(0).take(1)))
+        round.apply(0, ThousandMove.Raspis)
+        assertEquals(Phase.OVER, round.phase)
+
+        val match = ThousandMatch.forTesting(scores = listOf(100, 100))
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, round)))
+        assertEquals(0, saved.round.raspised, "роспись — это состояние кона, и она тоже пишется")
+
+        val first = match.finishRound(round)
+        val second = saved.match.finishRound(saved.round)
+        assertEquals(first.deltas, second.deltas)
+        assertEquals(first.raspised, second.raspised)
+        assertEquals(match.scores.toList(), saved.match.scores.toList())
+    }
 }
