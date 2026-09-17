@@ -24,6 +24,12 @@ import kotlin.random.Random
  * дешёвое, бьют самой дешёвой подходящей картой. «Хитрый» держит в голове
  * весь стол — что вышло и что ещё нет, — и по этому считает, побьют ли его
  * карту.
+ *
+ * На торге разница глубже: обычный складывает очки на руке, а хитрый
+ * раскладывает невидимое наугад и доигрывает кон — сто раз подряд, — и
+ * называет по среднему, а не по сумме (см. [ThousandSimulator]). Сумма
+ * карт считает очки, но не считает, что половину их придётся отдать
+ * сопернику.
  */
 object ThousandBot {
 
@@ -47,7 +53,7 @@ object ThousandBot {
         val memory = difficulty == Difficulty.CLEVER
 
         return when (round.phase) {
-            Phase.BIDDING -> bid(round, seat, moves, difficulty)
+            Phase.BIDDING -> bid(round, seat, moves, difficulty, random)
             Phase.PRIKUP -> pickPrikup(round, seat, moves)
             Phase.DISCARD -> discard(round, seat, moves)
             Phase.PLAY -> play(round, seat, moves, memory)
@@ -115,12 +121,21 @@ object ThousandBot {
         seat: Int,
         moves: List<ThousandMove>,
         difficulty: Difficulty,
+        random: Random,
     ): ThousandMove {
         val bids = moves.filterIsInstance<ThousandMove.Bid>()
         if (bids.isEmpty()) return ThousandMove.Pass
 
         val margin = if (difficulty == Difficulty.CLEVER) 10 else 25
-        val power = handPower(round.handOf(seat))
+        // Обычный верит сумме карт на руке, хитрый — перебору: тот же вопрос,
+        // но с оговоркой, что часть очков достанется сопернику. На слабой
+        // руке разница невелика, а на сильной перебор трезвее: сорок очков
+        // в марьяже уже записаны, а взяток под них может и не найтись.
+        val power = if (difficulty == Difficulty.CLEVER) {
+            ThousandSimulator.contract(round, seat, deals = BID_DEALS, random = random).mine
+        } else {
+            handPower(round.handOf(seat))
+        }
         val affordable = bids.filter { it.amount + margin <= power }.maxByOrNull { it.amount }
         if (affordable != null) return affordable
 
@@ -296,6 +311,15 @@ object ThousandBot {
     /** Чего стоит потратить карту на взятку: козырь придерживаем. */
     private fun cardCost(card: Card, trump: Suit?): Int =
         card.points * 3 + card.weight + if (card.suit == trump) 40 else 0
+
+    /**
+     * Сколько раскладов разыгрывает хитрый на торге.
+     *
+     * Не двести, как в симуляторе по умолчанию: заказ называется с шагом в
+     * пять, и лишняя сотня раскладов уточняет среднее на один-два очка —
+     * точность, которой шаг не стоит. Торг ждать не должен.
+     */
+    private const val BID_DEALS = 100
 
     /** С какого числа карт масть считается длинной. */
     private const val LONG_SUIT = 4
