@@ -91,6 +91,16 @@ sealed interface ThousandMove : Move {
      */
     data class Praise(val card: Card) : ThousandMove
 
+    /**
+     * Роспись — заказчик признаёт, что заказанного не набрать, и отказывается
+     * от игры: карты не доигрываются, с себя он списывает весь заказ,
+     * соперникам идёт по половине заказа (см. `THOUSAND.md`, 2.13).
+     *
+     * Ход доступен только заказчику и только на своём ходу в розыгрыше:
+     * роспись — отказ от собственной игры, а не ход в чужой.
+     */
+    data object Raspis : ThousandMove
+
     /** Положить карту в взятку. */
     data class Play(val card: Card) : ThousandMove
 }
@@ -136,6 +146,10 @@ class ThousandRound private constructor(
 
     /** Козырь — масть последнего объявленного марьяжа. До первого — null. */
     var trumpSuit: Suit? = null
+        private set
+
+    /** Кто расписался. Расписаться может только заказчик, поэтому тут либо он, либо null. */
+    var raspised: Int? = null
         private set
 
     private val passed = BooleanArray(playerCount)
@@ -234,6 +248,10 @@ class ThousandRound private constructor(
             Phase.PLAY -> buildList {
                 addAll(playableCards(seat).map { ThousandMove.Play(it) })
                 addAll(praisableCards(seat).map { ThousandMove.Praise(it) })
+                // Расписаться может заказчик и только на своём ходу. Взяток
+                // к этому моменту может быть сколько угодно: роспись — это
+                // «дальше не наберу», а не «ещё ничего не взял».
+                if (seat == declarer) add(ThousandMove.Raspis)
             }
 
             Phase.OVER -> emptyList()
@@ -316,6 +334,13 @@ class ThousandRound private constructor(
                 hands[seat].remove(move.card)
                 layCard(seat, move.card)
             }
+
+            // Кон на этом кончается: карты остаются на руках, стол — как
+            // стоял. Счёт за него считает уже не розыгрыш, а роспись.
+            ThousandMove.Raspis -> {
+                raspised = seat
+                phase = Phase.OVER
+            }
         }
     }
 
@@ -379,6 +404,11 @@ class ThousandRound private constructor(
     fun deltas(): IntArray {
         check(phase == Phase.OVER) { "кон ещё не доигран" }
         val dec = checkNotNull(declarer) { "без заказчика кон не кончается" }
+        if (raspised != null) {
+            return IntArray(playerCount) { seat ->
+                if (seat == dec) -currentBid else raspisShare(currentBid)
+            }
+        }
         val result = IntArray(playerCount)
         for (seat in 0 until playerCount) {
             val got = roundPoints(seat)
@@ -391,8 +421,15 @@ class ThousandRound private constructor(
         return result
     }
 
-    /** Кто не взял ни одной взятки — тому болт. */
-    fun bolted(): List<Int> = hands.indices.filter { tricks[it] == 0 }
+    /**
+     * Кто не взял ни одной взятки — тому болт.
+     *
+     * Расписанный кон взяток не считает вовсе: карты на нём не доиграны, и
+     * пустые взятки у всех — это не игра, а отказ от неё. Болт за роспись
+     * никому не пишется (`THOUSAND.md`, 2.13).
+     */
+    fun bolted(): List<Int> =
+        if (raspised != null) emptyList() else hands.indices.filter { tricks[it] == 0 }
 
     // --- Озвучка ----------------------------------------------------------
 
@@ -406,6 +443,7 @@ class ThousandRound private constructor(
         is ThousandMove.TakePrikups -> "Прикуп взят."
         is ThousandMove.Discard -> "Снос: ${move.cards.joinToString(", ") { it.spoken() }}."
         is ThousandMove.Praise -> "Хвалю ${move.card.suit.spoken}."
+        ThousandMove.Raspis -> "Роспись: заказ не играется."
         is ThousandMove.Play -> "Сыграна ${move.card.spoken()}."
         else -> "Ход сделан."
     }
@@ -445,6 +483,16 @@ class ThousandRound private constructor(
 
         /** Сколько раз пересдаём, прежде чем играть тем, что вышло. */
         private const val MAX_DEALS = 50
+
+        /**
+         * Что роспись пишет каждому сопернику: половина заказа.
+         *
+         * Округляем вниз до пяти — тем же шагом, что и очки защитников:
+         * сто пятёрка заказа делится пополам неровно, а дробных очков за
+         * столом не бывает. Заказчик при этом пишет заказ целиком, без
+         * округления: он за него и садился.
+         */
+        fun raspisShare(bid: Int): Int = bid / 2 / BID_STEP * BID_STEP
 
         private const val TRUMP_BASE = 100
 
@@ -554,6 +602,7 @@ class ThousandRound private constructor(
             tricks: List<Int>,
             table: List<Pair<Int, Card>>,
             barrelSeat: Int?,
+            raspised: Int? = null,
         ): ThousandRound {
             val round = ThousandRound(
                 hands = hands.map { it.toMutableList() }.toMutableList(),
@@ -567,6 +616,7 @@ class ThousandRound private constructor(
             round.currentBid = currentBid
             round.declarer = declarer
             round.trumpSuit = trumpSuit
+            round.raspised = raspised
             passed.forEach { round.passed[it] = true }
             named.forEach { round.namedBid[it] = true }
             trickPoints.forEachIndexed { seat, value -> round.trickPoints[seat] = value }

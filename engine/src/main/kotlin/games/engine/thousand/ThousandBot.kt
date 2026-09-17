@@ -29,7 +29,14 @@ object ThousandBot {
     ): ThousandMove? {
         val moves = round.legalMoves(seat)
         if (moves.isEmpty()) return null
-        if (difficulty == Difficulty.NOVICE) return moves[random.nextInt(moves.size)]
+
+        // Новичок играет картами, а не сдаётся: роспись — решение на счёт
+        // партии, и случайным ходом её выбирать нечего.
+        if (difficulty == Difficulty.NOVICE) {
+            val cards = moves.filterNot { it == ThousandMove.Raspis }
+            val pool = cards.ifEmpty { moves }
+            return pool[random.nextInt(pool.size)]
+        }
 
         return when (round.phase) {
             Phase.BIDDING -> bid(round, seat, moves, difficulty)
@@ -92,6 +99,10 @@ object ThousandBot {
     // --- Розыгрыш ---------------------------------------------------------
 
     private fun play(round: ThousandRound, seat: Int, moves: List<ThousandMove>): ThousandMove {
+        // Роспись — до всего остального: если заказ уже не набрать, ходить
+        // картой поздно, а расписаться дешевле, чем сесть.
+        if (moves.contains(ThousandMove.Raspis) && shouldRaspis(round, seat)) return ThousandMove.Raspis
+
         val praises = moves.filterIsInstance<ThousandMove.Praise>()
         val plays = moves.filterIsInstance<ThousandMove.Play>()
         val trump = round.trumpSuit
@@ -107,6 +118,27 @@ object ThousandBot {
         val lead = round.tableNow().firstOrNull()
             ?: return leading(plays, trump)
         return answering(round, seat, plays, lead, trump)
+    }
+
+    /**
+     * Пора ли расписываться.
+     *
+     * Роспись — признание, что заказанного не набрать: заказчик пишет заказ
+     * целиком, соперники — по половине заказа. Это мягче, чем сесть: сев,
+     * заказчик пишет тот же минус, но соперники берут свои очки целиком,
+     * а они бывают куда больше половины заказа.
+     *
+     * Считаем по самой щедрой оценке — очки за столом, вся рука и ещё не
+     * объявленные марьяжи. Если и это не дотягивает до заказа, надежды нет:
+     * часть взяток наверняка возьмут соперники, значит, и подавно не хватит.
+     */
+    private fun shouldRaspis(round: ThousandRound, seat: Int): Boolean {
+        val hand = round.handOf(seat)
+        var ceiling = round.roundPoints(seat) + hand.sumOf { it.points }
+        Suit.entries.forEach { suit ->
+            if (hand.hasMarriage(suit)) ceiling += marriagePoints(suit)
+        }
+        return ceiling < round.currentBid
     }
 
     /** Веду взятку: кладу старшую карту, чтобы её труднее было побить. */
