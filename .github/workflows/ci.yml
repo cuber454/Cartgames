@@ -49,8 +49,11 @@ jobs:
         with:
           gradle-version: '8.14.3'
 
+      # gradle.properties заточен под контейнер в 2 ГБ: -Xmx896m и метаспейс
+      # в 256 МБ. На раннере памяти больше, и компилятор Compose в этом
+      # лимите не укладывается — падает с OutOfMemoryError: Metaspace.
       - name: Собрать debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
       - uses: actions/upload-artifact@v4
         with:
