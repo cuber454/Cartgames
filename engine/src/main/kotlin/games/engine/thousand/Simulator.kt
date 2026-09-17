@@ -85,8 +85,8 @@ internal object ThousandSimulator {
      * Это ответ на вопрос торга — «а стоит ли называть». Козыря ещё нет,
      * прикуп бот не видел, и то и другое ему только предстоит получить:
      * прикуп вытягивается наугад из того же невидимого, козырем становится
-     * старший марьяж, какой окажется на руке после сноса. Прикуп заказчик
-     * берёт лучший — как взял бы за столом, — а сносит самое дешёвое.
+     * старший марьяж, какой окажется на руке после сноса. Сносит заказчик
+     * самое дешёвое.
      *
      * [Outcome.declarer] здесь то же, что [Outcome.mine]: заказчик — сам бот.
      */
@@ -100,7 +100,6 @@ internal object ThousandSimulator {
         // Форма прикупа — правило, а не тайна: вдвоём два прикупа по две
         // карты, втроём один из трёх (см. `prikupShape` в [ThousandRound]).
         val prikupSize = if (playerCount == 2) 2 else 3
-        val prikupCount = if (playerCount == 2) 2 else 1
         val discardCount = playerCount - 1
 
         val mine = IntArray(deals)
@@ -110,11 +109,11 @@ internal object ThousandSimulator {
             val spread = spread(round, seat, random)
             val hand = spread.hands[seat].toMutableList()
 
-            // Прикуп: заказчик выбирает лучший из прикупов, но пока не видел
-            // ни одного — для него это те же невидимые карты.
-            spread.left.shuffled(random).chunked(prikupSize).take(prikupCount)
-                .maxByOrNull { ThousandBot.handPower(it) }
-                ?.let { hand += it }
+            // Прикуп: заказчик берёт его не глядя, и берёт один из prikupCount
+            // закрытых прикупов. Для него это просто prikupSize невидимых карт
+            // наугад — выбирать лучший из нарисованных нельзя, иначе оценка
+            // окажется выше той, что бывает за столом.
+            spread.left.shuffled(random).chunked(prikupSize).firstOrNull()?.let { hand += it }
 
             // Снос: по одной карте каждому сопернику. Отдаём ту, которой жаль
             // меньше всего, — снесённая уходит врагу вместе со своими очками.

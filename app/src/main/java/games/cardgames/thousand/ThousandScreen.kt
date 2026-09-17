@@ -238,7 +238,13 @@ fun ThousandScreen(
     fun play(move: ThousandMove) {
         val round = session.round
         val tricksBefore = round.tricksPlayed().size
-        val phrase = ownPhrase(move)
+        val phrase = ownPhrase(
+            move,
+            // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
+            // назвать его надо сейчас, иначе две новые карты придётся искать
+            // в руке самому и на слух сравнивать с тем, что помнишь.
+            prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
+        )
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
         round.apply(PLAYER, move)
@@ -301,7 +307,14 @@ fun ThousandScreen(
             val move = ThousandBot.chooseMove(round, BOT, settings.difficulty, rng) ?: break
             val tricksBefore = round.tricksPlayed().size
             soundFor(move)
-            val phrase = botPhrase(move)
+            val phrase = botPhrase(
+                move,
+                // Взятый прикуп открывают обоим — иначе игрок так и не узнает,
+                // что ушло боту в руку, и это знание потеряно навсегда: в руку
+                // соперника не заглядывают. Берёт бот прикуп вслепую, как и
+                // игрок, но взятое называют вслух.
+                prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
+            )
             round.apply(BOT, move)
             // Звук хода и реплика бота стартуют в один момент и налезают
             // друг на друга. Разводим: сначала звук, потом речь. Молчащему
@@ -665,11 +678,17 @@ fun ThousandScreen(
  * Ход бота вслух. Коротко: за столом не комментируют каждую карту, её
  * называют — и всё. Торг, прикуп и снос названы по имени, потому что это
  * не карты, а решения, и о них иначе не догадаться.
+ *
+ * Прикуп — исключение из краткости: [prikup] называет карты, которые бот
+ * забрал. Взятый прикуп показывают обоим, а в открытую руку соперника не
+ * заглядывают: не назовём сейчас — игрок не узнает этого никогда.
  */
-private fun botPhrase(move: ThousandMove): String = when (move) {
+private fun botPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()): String = when (move) {
     is ThousandMove.Bid -> "Бот называет ${move.amount}."
     ThousandMove.Pass -> "Бот пасует."
-    is ThousandMove.TakePrikups -> "Бот берёт прикуп."
+    is ThousandMove.TakePrikups ->
+        if (prikup.isEmpty()) "Бот берёт прикуп."
+        else "Бот берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Бот снёс карту."
     is ThousandMove.Praise -> "Бот хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
     ThousandMove.Raspis -> "Бот расписывается."
@@ -677,10 +696,12 @@ private fun botPhrase(move: ThousandMove): String = when (move) {
 }
 
 /** Свой ход — вслух. Не «сыграна карта», а живая речь, короткая. */
-private fun ownPhrase(move: ThousandMove): String = when (move) {
+private fun ownPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()): String = when (move) {
     is ThousandMove.Bid -> "Называешь ${move.amount}."
     ThousandMove.Pass -> "Ты пасуешь."
-    is ThousandMove.TakePrikups -> "Берёшь прикуп ${move.index + 1}."
+    is ThousandMove.TakePrikups ->
+        if (prikup.isEmpty()) "Берёшь прикуп ${move.index + 1}."
+        else "Берёшь прикуп ${move.index + 1}: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Praise -> "Хвалишь ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
     ThousandMove.Raspis -> "Расписываешься."

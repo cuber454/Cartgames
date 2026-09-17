@@ -246,6 +246,49 @@ class ThousandBotTest {
         assertTrue(seen.unseen.contains(c(Rank.TEN, Suit.HEARTS)))
     }
 
+    /** Стол, на котором бот — заказчик и ему предстоит выбрать прикуп. */
+    private fun prikupRound(prikups: List<List<Card>>): ThousandRound {
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.SPADES)),
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.JACK, Suit.CLUBS)),
+            ),
+            prikups = prikups,
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        assertEquals(Phase.PRIKUP, round.phase)
+        assertEquals(0, round.declarer)
+        return round
+    }
+
+    @Test
+    fun `бот берёт прикуп вслепую — прикуп не влияет на выбор`() {
+        // Один прикуп — туз с десяткой, другой — девятка с валетом. Если бот
+        // подглядывает, он возьмёт дорогой; если играет как игрок — жребий
+        // один и тот же, и выбор один и тот же. Проверяем второе: жребий
+        // засеян одинаково, а прикупы поменяны местами.
+        val strong = listOf(c(Rank.ACE, Suit.HEARTS), c(Rank.TEN, Suit.HEARTS))
+        val weak = listOf(c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.CLUBS))
+        val first = prikupRound(listOf(strong, weak))
+        val second = prikupRound(listOf(weak, strong))
+
+        val one = Random(7)
+        val two = Random(7)
+        val chosen = mutableListOf<ThousandMove>()
+        repeat(50) {
+            val a = assertNotNull(ThousandBot.chooseMove(first, 0, Difficulty.CLEVER, one))
+            val b = assertNotNull(ThousandBot.chooseMove(second, 0, Difficulty.CLEVER, two))
+            assertEquals(a, b, "бот смотрит в прикуп: при том же жребии выбрал разные")
+            chosen += a
+        }
+        // И выбор не вырожден: берутся оба прикупа, а не всегда первый.
+        assertEquals(
+            setOf(ThousandMove.TakePrikups(0), ThousandMove.TakePrikups(1)),
+            chosen.toSet(),
+        )
+    }
+
     @Test
     fun `новичок не расписывается — он играет картами`() {
         val round = hopelessContract()
