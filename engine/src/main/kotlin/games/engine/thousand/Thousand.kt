@@ -434,6 +434,18 @@ class ThousandRound private constructor(
         const val MAX_BID = 120
         const val BID_STEP = 5
 
+        /** Сколько очков в колоде: вся она, до последней девятки. */
+        const val TOTAL_POINTS = 120
+
+        /** Дешевле этого прикуп — не прикуп, а наказание. */
+        private const val MIN_PRIKUP_POINTS = 4
+
+        /** С такой рукой взяток не взять: на неё и играть нечего. */
+        private const val MIN_HAND_POINTS = 13
+
+        /** Сколько раз пересдаём, прежде чем играть тем, что вышло. */
+        private const val MAX_DEALS = 50
+
         private const val TRUMP_BASE = 100
 
         /** Сколько карт на руках и в прикупе — от числа игроков. */
@@ -441,11 +453,18 @@ class ThousandRound private constructor(
         private fun prikupShape(playerCount: Int): Pair<Int, Int> =
             if (playerCount == 2) 2 to 2 else 1 to 3
 
-        /**
-         * Новая раздача. Вдвоём — по 10 карт и два прикупа по 2;
-         * втроём — по 7 карт и один прикуп из 3. Вся колода уходит
-         * со стола: 24 карты и там и там.
-         */
+        /** Одна раздача: перемешать колоду и разложить её по рукам и прикупам. */
+        private fun deal(
+            random: Random,
+            playerCount: Int,
+        ): Pair<MutableList<MutableList<Card>>, List<List<Card>>> {
+            val deck = Deck(fullDeck24()).also { it.shuffle(random) }
+            val hands = MutableList(playerCount) { mutableListOf<Card>() }
+            repeat(handSize(playerCount)) { hands.forEach { hand -> hand += deck.draw() } }
+            val (prikupCount, prikupSize) = prikupShape(playerCount)
+            return hands to List(prikupCount) { List(prikupSize) { deck.draw() } }
+        }
+
         /**
          * Что бочка обязана заказать за столом на [playerCount] человек.
          * Втроём — потолок 120: только он и даёт недостающие до тысячи очки.
@@ -455,6 +474,15 @@ class ThousandRound private constructor(
          */
         fun barrelBid(playerCount: Int): Int = if (playerCount == 2) MIN_BID else MAX_BID
 
+        /**
+         * Новая раздача. Вдвоём — по 10 карт и два прикупа по 2;
+         * втроём — по 7 карт и один прикуп из 3. Вся колода уходит
+         * со стола: 24 карты и там и там.
+         *
+         * Пустую раздачу пересдаём ([badDeal]): с ней кон не играется, а
+         * застрять на раздаче хуже, чем сыграть неудачный кон, — поэтому
+         * после [MAX_DEALS] попыток играем тем, что вышло.
+         */
         fun start(
             random: Random = Random.Default,
             playerCount: Int = 2,
@@ -463,11 +491,14 @@ class ThousandRound private constructor(
         ): ThousandRound {
             require(playerCount in 2..3) { "«Тысяча» бывает на двоих или на троих" }
 
-            val deck = Deck(fullDeck24()).also { it.shuffle(random) }
-            val hands = MutableList(playerCount) { mutableListOf<Card>() }
-            repeat(handSize(playerCount)) { hands.forEach { hand -> hand += deck.draw() } }
-            val (prikupCount, prikupSize) = prikupShape(playerCount)
-            val prikups = List(prikupCount) { List(prikupSize) { deck.draw() } }
+            var (hands, prikups) = deal(random, playerCount)
+            var attempt = 1
+            while (attempt < MAX_DEALS && badDeal(hands, prikups)) {
+                val next = deal(random, playerCount)
+                hands = next.first
+                prikups = next.second
+                attempt++
+            }
 
             return ThousandRound(
                 hands = hands,
@@ -477,6 +508,29 @@ class ThousandRound private constructor(
                 barrelSeat = barrelSeat,
                 barrelBid = barrelBid(playerCount),
             )
+        }
+
+        /**
+         * Раздача, с которой кон не играется, — её пересдают.
+         *
+         * Поводы взяты из книги, по которой сверяли правила (см. `THOUSAND.md`,
+         * 2.12): четыре девятки на одних руках, пустой прикуп, голая рука.
+         * Пятый повод наш, и он только про игру вдвоём: там один прикуп
+         * уходит из колоды целиком, и если он дорогой, обязательной сотни
+         * в игре может не остаться вовсе — заказ будет не выполнить никому.
+         */
+        internal fun badDeal(hands: List<List<Card>>, prikups: List<List<Card>>): Boolean {
+            if (hands.any { hand -> hand.count { it.rank == Rank.NINE } > 3 }) return true
+            if (prikups.any { prikup -> prikup.count { it.rank == Rank.NINE } > 1 }) return true
+            if (prikups.any { prikup -> prikup.sumOf { it.points } < MIN_PRIKUP_POINTS }) return true
+            if (hands.any { hand -> hand.sumOf { it.points } < MIN_HAND_POINTS }) return true
+
+            if (hands.size == 2) {
+                val dead = prikups.maxOf { prikup -> prikup.sumOf { it.points } }
+                if (TOTAL_POINTS - dead < MIN_BID) return true
+            }
+
+            return false
         }
 
         /**

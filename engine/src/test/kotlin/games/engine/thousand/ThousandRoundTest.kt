@@ -102,6 +102,119 @@ class ThousandRoundTest {
     }
 
     @Test
+    fun `пустая раздача — не игра, а пересдача`() {
+        // Поводы из книги, по которой сверяли правила (THOUSAND.md, 2.12).
+        val fourNines = listOf(
+            listOf(
+                c(Rank.NINE, Suit.SPADES), c(Rank.NINE, Suit.HEARTS),
+                c(Rank.NINE, Suit.CLUBS), c(Rank.NINE, Suit.DIAMONDS),
+                c(Rank.ACE, Suit.SPADES), c(Rank.ACE, Suit.HEARTS),
+                c(Rank.TEN, Suit.SPADES), c(Rank.TEN, Suit.HEARTS),
+            ),
+            listOf(
+                c(Rank.KING, Suit.SPADES), c(Rank.KING, Suit.HEARTS),
+                c(Rank.KING, Suit.CLUBS), c(Rank.KING, Suit.DIAMONDS),
+                c(Rank.QUEEN, Suit.SPADES), c(Rank.QUEEN, Suit.HEARTS),
+            ),
+        )
+        assertTrue(
+            ThousandRound.badDeal(fourNines, listOf(listOf(c(Rank.JACK, Suit.SPADES), c(Rank.JACK, Suit.HEARTS)))),
+            "четыре девятки на одних руках — играть нечем",
+        )
+
+        val rich = listOf(
+            listOf(
+                c(Rank.ACE, Suit.SPADES), c(Rank.ACE, Suit.HEARTS),
+                c(Rank.TEN, Suit.SPADES), c(Rank.TEN, Suit.HEARTS),
+            ),
+            listOf(
+                c(Rank.KING, Suit.SPADES), c(Rank.KING, Suit.HEARTS),
+                c(Rank.QUEEN, Suit.SPADES), c(Rank.QUEEN, Suit.HEARTS),
+            ),
+        )
+        assertTrue(
+            ThousandRound.badDeal(rich, listOf(listOf(c(Rank.NINE, Suit.SPADES), c(Rank.NINE, Suit.HEARTS)))),
+            "две девятки в прикупе",
+        )
+        assertTrue(
+            ThousandRound.badDeal(rich, listOf(listOf(c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.HEARTS)))),
+            "прикуп дешевле четырёх очков",
+        )
+        assertFalse(
+            ThousandRound.badDeal(rich, listOf(listOf(c(Rank.JACK, Suit.SPADES), c(Rank.JACK, Suit.HEARTS)))),
+            "обычный прикуп игре не мешает",
+        )
+
+        val bare = listOf(
+            listOf(
+                c(Rank.NINE, Suit.SPADES), c(Rank.NINE, Suit.HEARTS), c(Rank.NINE, Suit.CLUBS),
+                c(Rank.JACK, Suit.SPADES), c(Rank.JACK, Suit.HEARTS),
+                c(Rank.JACK, Suit.CLUBS), c(Rank.JACK, Suit.DIAMONDS),
+                c(Rank.QUEEN, Suit.SPADES),
+            ),
+            listOf(
+                c(Rank.ACE, Suit.SPADES), c(Rank.ACE, Suit.HEARTS),
+                c(Rank.ACE, Suit.CLUBS), c(Rank.ACE, Suit.DIAMONDS),
+                c(Rank.KING, Suit.SPADES), c(Rank.KING, Suit.HEARTS),
+                c(Rank.KING, Suit.CLUBS), c(Rank.KING, Suit.DIAMONDS),
+            ),
+        )
+        assertTrue(
+            ThousandRound.badDeal(bare, listOf(listOf(c(Rank.TEN, Suit.SPADES), c(Rank.TEN, Suit.HEARTS)))),
+            "голая рука: меньше тринадцати очков",
+        )
+    }
+
+    @Test
+    fun `вдвоём дорогой прикуп оставил бы в игре меньше сотни — пересдача`() {
+        val hands = listOf(
+            listOf(
+                c(Rank.TEN, Suit.SPADES), c(Rank.TEN, Suit.HEARTS),
+                c(Rank.TEN, Suit.CLUBS), c(Rank.TEN, Suit.DIAMONDS),
+            ),
+            listOf(c(Rank.ACE, Suit.CLUBS), c(Rank.ACE, Suit.DIAMONDS), c(Rank.KING, Suit.SPADES), c(Rank.KING, Suit.HEARTS)),
+        )
+        val prikups = listOf(
+            listOf(c(Rank.ACE, Suit.SPADES), c(Rank.ACE, Suit.HEARTS)),
+            listOf(c(Rank.JACK, Suit.SPADES), c(Rank.JACK, Suit.HEARTS)),
+        )
+        assertTrue(
+            ThousandRound.badDeal(hands, prikups),
+            "второй прикуп уходит из игры: туз с тузом оставят в колоде девяносто восемь",
+        )
+
+        val three = hands + listOf(
+            listOf(c(Rank.KING, Suit.CLUBS), c(Rank.KING, Suit.DIAMONDS), c(Rank.QUEEN, Suit.SPADES), c(Rank.QUEEN, Suit.HEARTS)),
+        )
+        assertFalse(
+            ThousandRound.badDeal(three, prikups),
+            "втроём из игры ничего не выпадает — правило не про них",
+        )
+    }
+
+    @Test
+    fun `раздача всегда играется, а вдвоём сотня всегда достижима`() {
+        repeat(300) { seed ->
+            val two = ThousandRound.start(Random(seed), playerCount = 2)
+            val prikups = listOf(two.prikup(0), two.prikup(1))
+            assertFalse(
+                ThousandRound.badDeal(listOf(two.handOf(0), two.handOf(1)), prikups),
+                "пересдача не пересдалась, seed $seed",
+            )
+            assertTrue(
+                ThousandRound.TOTAL_POINTS - prikups.maxOf { it.sumOf { card -> card.points } } >= ThousandRound.MIN_BID,
+                "вдвоём обязательная сотня должна быть достижима, seed $seed",
+            )
+
+            val three = ThousandRound.start(Random(seed), playerCount = 3)
+            assertFalse(
+                ThousandRound.badDeal((0..2).map { three.handOf(it) }, listOf(three.prikup(0))),
+                "пересдача не пересдалась, seed $seed, трое",
+            )
+        }
+    }
+
+    @Test
     fun `вдвоём заказчик выбирает прикуп и после сноса у всех по одиннадцать`() {
         val round = ThousandRound.start(Random(7), playerCount = 2)
         round.apply(0, ThousandMove.Bid(100))
