@@ -213,17 +213,46 @@ fun ThousandScreen(
         return " $who, очков ${trick.points}."
     }
 
+    /**
+     * Сигнал на исход кона: победа, поражение или болт — что случилось.
+     * Играет один сигнал, а не все подряд, и возвращает, сколько он звучит:
+     * фразу начинают после него, иначе нота и голос наложатся.
+     *
+     * Конец матча перекрывает болт в последнем коне: игроку важно, чем
+     * кончилась партия, а не то, что последний кон записан в минус, — это и
+     * так слышно в счёте. Обратный порядок дал бы две ноты подряд в момент,
+     * когда игрок ждёт одной.
+     */
+    fun finishSignal(summary: RoundSummary): Long {
+        if (!settings.signals) return 0L
+        val winner = session.match.winner
+        return when {
+            winner == PLAYER -> { sounds.win(); TableSounds.WIN_MS.toLong() }
+            winner != null -> { sounds.lose(); TableSounds.LOSE_MS.toLong() }
+            summary.bolted.contains(PLAYER) -> { sounds.bolt(); TableSounds.BOLT_MS.toLong() }
+            else -> 0L
+        }
+    }
+
     /** Кон доигран — заносим его в матч и говорим итог. */
     fun finishIfOver() {
         val round = session.round
         if (round.phase != Phase.OVER || session.recorded) return
         val summary = session.record()
         if (session.match.winner != null) session.forgetSaved()
-        voice.say(roundPhrase(round, summary, session.match))
+        val signalMs = finishSignal(summary)
+        voice.say(
+            roundPhrase(round, summary, session.match),
+            afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
+        )
     }
 
     fun dealNew() {
         if (settings.sounds) sounds.deal()
+        // Сигнал начала идёт вместе с шорохом раздачи, а не после него:
+        // ноты и шум не перекрывают друг друга на слух, а разведённые по
+        // времени они растянули бы паузу перед фразой вдвое.
+        if (settings.signals) sounds.start()
         // Раздача шумит почти семь десятых секунды: скажи мы сразу — голос
         // утонул бы в шорохе карт. Выключенные звуки — ждать нечего.
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
@@ -333,9 +362,14 @@ fun ThousandScreen(
             session.persist()
             played = true
         }
-        // Ход вернулся к игроку — короткий толчок: слышно не всегда, а тут
-        // понятно без звука, что ждут тебя.
-        if (played && settings.vibration && round.turn == PLAYER) vibrations.tap()
+        // Ход вернулся к игроку — короткий толчок и тихая нота: толчок
+        // слышно не всегда, а тут понятно без слов, что ждут тебя.
+        // Кон доигран — ход формально ещё за игроком, но ждать его нечего:
+        // там скажет своё сигнал исхода, и две ноты подряд тут ни к чему.
+        if (played && round.turn == PLAYER && round.phase != Phase.OVER) {
+            if (settings.vibration) vibrations.tap()
+            if (settings.signals) sounds.turn()
+        }
         finishIfOver()
         if (played) session.tick++
     }

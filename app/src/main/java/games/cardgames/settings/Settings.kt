@@ -108,6 +108,13 @@ data class Settings(
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     val sounds: Boolean = true,
+    /**
+     * Сигналы: короткие ноты о событиях — начало, твой ход, победа,
+     * поражение, болт. Отдельно от [sounds]: шум стола — это карты, он идёт
+     * поверх игры и не мешает, а сигнал «твой ход» звучит сто раз за партию
+     * и надоедает первым. Выключив сигналы, игрок не теряет стук карт.
+     */
+    val signals: Boolean = true,
     /** Толчок, когда ход перешёл к игроку. */
     val vibration: Boolean = true,
     /** И толчок на собственный ход: карта легла. */
@@ -145,6 +152,7 @@ private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
 private const val KEY_SOUNDS = "sounds"
+private const val KEY_SIGNALS = "signals"
 private const val KEY_VIBRATION = "vibration"
 private const val KEY_OWN_VIBRATION = "own_vibration"
 private const val KEY_DIFFICULTY = "difficulty"
@@ -167,6 +175,7 @@ fun loadSettings(context: Context): Settings {
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
         sounds = prefs.getBoolean(KEY_SOUNDS, true),
+        signals = prefs.getBoolean(KEY_SIGNALS, true),
         vibration = prefs.getBoolean(KEY_VIBRATION, true),
         ownVibration = prefs.getBoolean(KEY_OWN_VIBRATION, true),
         difficulty = prefs.getString(KEY_DIFFICULTY, null)
@@ -204,6 +213,7 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
         .putBoolean(KEY_SOUNDS, settings.sounds)
+        .putBoolean(KEY_SIGNALS, settings.signals)
         .putBoolean(KEY_VIBRATION, settings.vibration)
         .putBoolean(KEY_OWN_VIBRATION, settings.ownVibration)
         .putString(KEY_DIFFICULTY, settings.difficulty.name)
