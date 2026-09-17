@@ -45,6 +45,7 @@ import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
+import games.cardgames.ui.TableCards
 import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
 import games.engine.Card as EngineCard
@@ -141,6 +142,11 @@ fun ThousandScreen(
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
+    // Карты на столе — мельче рук: стол смотрят мельком, а рука должна
+    // остаться крупной. Масштаб крупного текста тут не удваивается, иначе
+    // стол съел бы пол-экрана.
+    val tableWidth: Dp = (CARD_WIDTH * 0.55f).dp
+    val tableHeight: Dp = (CARD_HEIGHT * 0.55f).dp
     val columns = if (settings.largeText) 2 else 3
 
     // Кто говорит за столом: приложение или скринридер. В каждый момент —
@@ -463,6 +469,13 @@ fun ThousandScreen(
                 Text(info, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
                 Spacer(Modifier.height(4.dp))
                 Text(tableLine, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                // Стол ещё и картинками: слова читает скринридер, а зрячий
+                // за тем же столом видит, чем ходили. Одно другому не мешает —
+                // картинка молчит, подпись над ней говорит.
+                if (table.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    TableCards(table, cardWidth = tableWidth, cardHeight = tableHeight)
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(session.lastPhrase, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
             }

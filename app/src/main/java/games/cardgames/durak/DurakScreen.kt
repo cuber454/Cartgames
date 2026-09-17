@@ -48,6 +48,7 @@ import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
+import games.cardgames.ui.TableBattles
 import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
 // Карта движка и карточка-контейнер из Material3 зовутся одинаково:
@@ -145,6 +146,11 @@ fun DurakScreen(
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
+    // Карты на столе мельче рук и в крупном тексте не растут: стол смотрят
+    // мельком, а место нужно руке. Пар на столе бывает до шести, и ряд
+    // прокручивается вбок.
+    val tableWidth: Dp = (CARD_WIDTH * 0.5f).dp
+    val tableHeight: Dp = (CARD_HEIGHT * 0.5f).dp
     // Крупным картам втроём тесно — тогда по две в ряд.
     val columns = if (settings.largeText) 2 else 3
 
@@ -461,6 +467,13 @@ fun DurakScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2,
                 )
+                // И те же карты картинками: слова — скринридеру, картинки —
+                // тому, кто за столом видит. Картинка молчит, так что
+                // дважды карта не читается.
+                if (game.table.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    TableBattles(game.table, cardWidth = tableWidth, cardHeight = tableHeight)
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(session.lastPhrase, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
             }
