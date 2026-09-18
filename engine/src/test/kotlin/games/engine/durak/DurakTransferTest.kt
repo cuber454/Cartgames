@@ -154,7 +154,7 @@ class DurakTransferTest {
                 listOf(c(Rank.SEVEN, Suit.CLUBS), c(Rank.NINE, Suit.CLUBS)),
             ),
             deck = deck,
-            transferAllowed = false,
+            rules = DurakRules(transfer = false),
         )
         game.apply(0, DurakMove.Attack(c(Rank.SEVEN, Suit.HEARTS)))
 
@@ -163,7 +163,7 @@ class DurakTransferTest {
         // Отбиться семёркой треф нельзя (она не старше и не той масти) —
         // значит остаётся только взять.
         assertEquals(listOf<DurakMove>(DurakMove.Take), moves)
-        assertFalse(game.transferAllowed)
+        assertFalse(game.rules.transfer)
     }
 
     /**
@@ -173,15 +173,15 @@ class DurakTransferTest {
      */
     @Test
     fun `режим партии переживает сохранение`() {
-        val game = DurakGame.start(random = kotlin.random.Random(7), transferAllowed = false)
+        val game = DurakGame.start(random = kotlin.random.Random(7), rules = DurakRules(transfer = false))
 
         val back = DurakSave.read(DurakSave.write(game))!!
 
-        assertFalse(back.transferAllowed)
+        assertFalse(back.rules.transfer)
         val byDefault = DurakSave.read(
             DurakSave.write(DurakGame.start(random = kotlin.random.Random(7))),
         )!!
-        assertTrue(byDefault.transferAllowed, "без строки transfer в записи режим остаётся переводным")
+        assertTrue(byDefault.rules.transfer, "без строки transfer в записи режим остаётся переводным")
     }
 
     @Test

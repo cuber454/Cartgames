@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.dp
 import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
-import games.cardgames.durak.durakTransferAllowed
+import games.cardgames.durak.loadDurakRules
 import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
 import games.cardgames.rules.thousandRules
@@ -257,7 +257,7 @@ private fun GamesScreen(
             Button(
                 onClick = {
                     saveSettings(context, settings.copy(lastGame = GAME_DURAK))
-                    session.restart(transferAllowed = durakTransferAllowed(context))
+                    session.restart(rules = loadDurakRules(context))
                     onDurak()
                 },
                 modifier = Modifier.fillMaxWidth(),

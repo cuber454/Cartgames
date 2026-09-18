@@ -61,20 +61,24 @@ data class Battle(val attack: Card, val defense: Card? = null) {
  *    на столе, и атакующим становится сам. Отбиваться теперь соседу, и
  *    уже от всего стола разом. Цепочка переводов не ограничена, пока
  *    каждому следующему хватает карт. Правило включается настройкой:
- *    с [transferAllowed] = false выходит «подкидной» дурак, где
+ *    с `rules.transfer = false` выходит «подкидной» дурак, где
  *    защищающийся только отбивается или берёт.
  *
  * Партия считается оконченной, когда колода пуста и у кого-то кончились
  * карты: он вышел и выиграл, оставшийся с картами — «дурак». Если вышли
  * оба разом — ничья.
+ *
+ * Порядок добора — четвёртое место, где легко ошибиться, и ошибка эта
+ * невидима: карты из колоды достанутся не тем. По книге первым берёт тот,
+ * кто начинал заход, а последним — тот, под кого ходили ([refillAll]).
  */
 class DurakGame private constructor(
     val trumpSuit: Suit,
     private val deck: Deck,
     private val hands: MutableList<MutableList<Card>>,
     private var attackerSeat: Int,
-    /** Разрешён ли перевод. Правило партии, а не хода: переключается настройкой. */
-    val transferAllowed: Boolean,
+    /** Договорённости сторон. Правило партии, а не хода: начали по ним — по ним и доигрывают. */
+    val rules: DurakRules = DurakRules.BOOK,
 ) : GameRules<DurakGame> {
 
     val playerCount: Int get() = hands.size
@@ -172,7 +176,7 @@ class DurakGame private constructor(
                     // соседу. У соседа должно хватить карт на весь стол вместе
                     // с этой — иначе перевод был бы способом подсунуть ему
                     // больше, чем он в силах отбить.
-                    if (transferAllowed && tableCards.all { !it.beaten }) {
+                    if (rules.transfer && tableCards.all { !it.beaten }) {
                         val next = (seat + 1) % playerCount
                         val enoughCards = hands[next].size >= tableCards.size + 1
                         if (enoughCards) {
@@ -193,6 +197,12 @@ class DurakGame private constructor(
     fun apply(seat: Int, move: DurakMove) {
         check(!finished) { "партия окончена" }
         check(move in legalMoves(seat)) { "недопустимый ход: $move" }
+
+        // Кто начинал заход и под кого ходили — запоминаем до хода. «Бито»
+        // передаёт атаку отбившемуся, и по полям порядка добора потом уже не
+        // восстановить: оба поля начнут указывать на новых игроков.
+        val started = attackerSeat
+        val under = defender
 
         when (move) {
             is DurakMove.Attack -> {
@@ -227,7 +237,7 @@ class DurakGame private constructor(
             }
         }
 
-        if (move is DurakMove.Take || move is DurakMove.Pass) refillAll()
+        if (move is DurakMove.Take || move is DurakMove.Pass) refillAll(started, under)
         checkEnd()
     }
 
@@ -244,9 +254,21 @@ class DurakGame private constructor(
         return minOf(TABLE_LIMIT, defenderCanStillBeat)
     }
 
-    /** Добор до шести карт: сначала атакующий, потом защищающийся. */
-    private fun refillAll() {
-        for (seat in listOf(attackerSeat, defender)) {
+    /**
+     * Добор до шести карт: сначала [first], потом [second].
+     *
+     * Порядок здесь не формальность, а правило, и записано оно в книге
+     * отдельной строкой: первым берёт тот, кто начинал заход, а в самом
+     * конце карты добирает тот, под кого ходили. Добери наоборот — и карты
+     * из колоды разойдутся не тем: ошибка не видна ни на столе, ни в счёте,
+     * только в том, кому что пришло.
+     *
+     * Именно поэтому игроки приходят сюда парой, а не берутся из полей:
+     * к моменту добора после «бито» атака уже передана, и `attackerSeat`
+     * с `defender` называют не тех, кто заход начинал.
+     */
+    private fun refillAll(first: Int, second: Int) {
+        for (seat in listOf(first, second)) {
             while (hands[seat].size < HAND_SIZE && !deck.isEmpty()) {
                 hands[seat] += deck.draw()
             }
@@ -324,11 +346,17 @@ class DurakGame private constructor(
          * Новая партия: колода тасуется, по шесть карт каждому, козырь —
          * по нижней карте. Первым ходит тот, у кого младший козырь;
          * если козырей ни у кого нет — как решит жребий.
+         *
+         * [firstAttacker] задаётся, когда партия начинается не с чистого
+         * листа: по договорённости первым ходит дурак прошлой партии. Кто
+         * дурак, знает доигранная партия, а не эта, — поэтому и приходит
+         * сюда числом, а не берётся из [DurakRules].
          */
         fun start(
             random: Random = Random.Default,
             playerCount: Int = 2,
-            transferAllowed: Boolean = true,
+            rules: DurakRules = DurakRules.BOOK,
+            firstAttacker: Int? = null,
         ): DurakGame {
             require(playerCount in 2..6) { "от двух до шести игроков" }
 
@@ -336,15 +364,21 @@ class DurakGame private constructor(
             val hands = MutableList(playerCount) { mutableListOf<Card>() }
             repeat(HAND_SIZE) { hands.forEach { hand -> hand += deck.draw() } }
 
-            val trumpSuit = deck.bottomOrNull()?.suit
-                ?: error("колода пуста — такого быть не может")
+            // Вшестером тридцать шесть карт раздаются целиком, и нижней карты
+            // в колоде не остаётся — открывать нечего. Книга и на это
+            // отвечает: козырную масть назначает последняя карта раздачи,
+            // а последней ложится карта последней руки.
+            val trumpSuit = (deck.bottomOrNull() ?: hands.last().last()).suit
 
-            val attacker = hands.indices
-                .filter { seat -> hands[seat].any { it.suit == trumpSuit } }
-                .minByOrNull { seat -> hands[seat].filter { it.suit == trumpSuit }.minOf { it.rank.value } }
+            val attacker = firstAttacker?.takeIf { it in hands.indices }
+                ?: hands.indices
+                    .filter { seat -> hands[seat].any { it.suit == trumpSuit } }
+                    .minByOrNull { seat ->
+                        hands[seat].filter { it.suit == trumpSuit }.minOf { it.rank.value }
+                    }
                 ?: random.nextInt(playerCount)
 
-            return DurakGame(trumpSuit, deck, hands, attacker, transferAllowed)
+            return DurakGame(trumpSuit, deck, hands, attacker, rules)
         }
 
         /**
@@ -361,14 +395,14 @@ class DurakGame private constructor(
             attacker: Int,
             table: List<Battle> = emptyList(),
             discarded: List<Card> = emptyList(),
-            transferAllowed: Boolean = true,
+            rules: DurakRules = DurakRules.BOOK,
         ): DurakGame {
             val game = DurakGame(
                 trumpSuit = trumpSuit,
                 deck = Deck(deck),
                 hands = hands.map { it.toMutableList() }.toMutableList(),
                 attackerSeat = attacker,
-                transferAllowed = transferAllowed,
+                rules = rules,
             )
             game.tableCards += table
             game.discarded += discarded
@@ -382,13 +416,13 @@ class DurakGame private constructor(
             hands: List<List<Card>>,
             deck: List<Card> = emptyList(),
             attacker: Int = 0,
-            transferAllowed: Boolean = true,
+            rules: DurakRules = DurakRules.BOOK,
         ): DurakGame = DurakGame(
             trumpSuit = trumpSuit,
             deck = Deck(deck),
             hands = hands.map { it.toMutableList() }.toMutableList(),
             attackerSeat = attacker,
-            transferAllowed = transferAllowed,
+            rules = rules,
         )
     }
 }
