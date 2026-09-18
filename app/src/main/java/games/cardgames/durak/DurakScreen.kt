@@ -33,7 +33,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.score.Outcome
@@ -580,23 +579,31 @@ fun DurakScreen(
             // и ждёт ответа. Отвечаем своим голосом и в том случае, когда
             // за столом говорит скринридер.
             //
-            // Имя приклеено к самой кнопке, а не выведено из надписи внутри:
-            // из-за стола у незрячего игрока ровно эти две кнопки, и молчащая
-            // из них — тупик. Надпись остаётся для глаза, имя — для слуха;
-            // надпись поэтому закрыта от скринридера — иначе он прочитает
-            // одно и то же дважды.
+            // Имя кнопки живёт внутри неё, а не рядом с ней.
+            //
+            // Так его собирает сам Compose: имя, положенное на кнопку снаружи,
+            // до неё не доходит, и скринридер читает «без метки» — проверено
+            // на телефоне. Внутри — доходит и склеивается с кнопкой; ровно так
+            // подписаны кнопки-иконки во всём Compose. Надпись для глаза при
+            // этом закрыта от скринридера, иначе он прочитает её дважды.
             Button(
                 onClick = { voice.sayRequested(allowedPhrase()) },
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics { contentDescription = "Что можно" },
-            ) { Text("Что можно", modifier = Modifier.clearAndSetSemantics {}) }
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    "Что можно",
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = "Что можно" },
+                )
+            }
             Button(
                 onClick = { voice.sayRequested(session.lastPhrase) },
-                modifier = Modifier
-                    .weight(1f)
-                    .semantics { contentDescription = "Повтори" },
-            ) { Text("Повтори", modifier = Modifier.clearAndSetSemantics {}) }
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    "Повтори",
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = "Повтори" },
+                )
+            }
         }
 
     }
