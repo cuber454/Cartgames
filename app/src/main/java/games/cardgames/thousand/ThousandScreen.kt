@@ -711,13 +711,19 @@ fun ThousandScreen(
             }
 
             prikups.isNotEmpty() -> {
-                prikups.forEach { take ->
-                    Button(
-                        onClick = { play(take) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Взять прикуп ${take.index + 1}") }
-                    Spacer(Modifier.height(8.dp))
+                // Прикупы стоят в ряд, а не один под другим: их выбирают
+                // между собой, и «левый или правый» — это и есть выбор.
+                // Столбиком они читались как два шага подряд, а не как два
+                // равных предложения (Катерина, 18.09).
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    prikups.forEach { take ->
+                        Button(
+                            onClick = { play(take) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Взять прикуп ${take.index + 1}") }
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
             }
 
             // Марьяж объявляют картой, которой и ходят, поэтому кнопка одна,
