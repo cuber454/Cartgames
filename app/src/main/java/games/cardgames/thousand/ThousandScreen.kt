@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.settings.BOT_PITCH_THOUSAND
+import games.cardgames.settings.GameSettingStore
 import games.cardgames.settings.botPitch
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
@@ -99,6 +100,11 @@ fun ThousandScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
+
+    // Помощник «хвалить автоматически» — из того же хранилища, что и
+    // договорённости, но в правила партии не входит: он про то, кто решает,
+    // а не про то, как считают.
+    val autoPraise = remember { GameSettingStore(context).value(AUTO_PRAISE) }
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -303,14 +309,16 @@ fun ThousandScreen(
         if (settings.ownVibration) vibrations.tap()
         round.apply(PLAYER, move)
         val gap = soundGap(move)
+        val trick = trickSuffix(round, tricksBefore)
         voice.sayOwnMove(
-            phrase + note + trickSuffix(round, tricksBefore),
+            phrase + note + trick,
             afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
-            // Прикуп — ход, о котором скринридер сам не расскажет: он прочитал
-            // кнопку «Взять прикуп», а не то, что пришло в руку. Сказать это
-            // вполголоса, «для Повтора», значит оставить игрока искать две
-            // новые карты на слух. Поэтому здесь фраза звучит всегда.
-            aloud = taken != null,
+            // Прикуп и взятка — то, о чём скринридер сам не расскажет: он
+            // прочитал карту, которой игрок ходил, а не то, что пришло в руку
+            // и не то, чья это взятка. Сказать это вполголоса, «для Повтора»,
+            // значит оставить игрока выяснять это самому — а взятку он у себя
+            // как раз и не слышит. Поэтому такие фразы звучат всегда.
+            aloud = taken != null || trick.isNotEmpty(),
         )
         session.persist()
         finishIfOver()
@@ -428,6 +436,27 @@ fun ThousandScreen(
             if (settings.vibration) vibrations.tap()
             if (settings.signals) sounds.turn()
         }
+
+        // Хвалить автоматически: договорённость включена — объявляем марьяж
+        // сами, как только он стал возможен, и не переспрашиваем.
+        //
+        // Ход при этом делает та самая карта пары, которой марьяж и
+        // объявляют: другого способа объявить его в «Тысяче» нет, объявление
+        // и есть ход этой картой. Поэтому помощник и живёт в настройках, а не
+        // зашит: он распоряжается сильнейшим и необратимым решением партии —
+        // масть марьяжа становится козырем до конца кона (THOUSAND.md, 7.2).
+        if (autoPraise && round.turn == PLAYER && round.phase != Phase.OVER) {
+            val praise = round.legalMoves(PLAYER)
+                .filterIsInstance<ThousandMove.Praise>()
+                .firstOrNull()
+            if (praise != null) {
+                // Дослушиваем бота: он только что сходил, и его фразу перебивать
+                // незачем — своя всё равно пойдёт после паузы.
+                delay(voice.waitMs())
+                play(praise)
+            }
+        }
+
         finishIfOver()
         if (played) session.tick++
     }

@@ -42,6 +42,7 @@ import games.cardgames.durak.DURAK_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
 import games.cardgames.score.Score
+import games.cardgames.thousand.AUTO_PRAISE
 import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
@@ -300,6 +301,16 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             val rules = if (game == GAME_THOUSAND) THOUSAND_SETTINGS else DURAK_SETTINGS
             rules.forEach { setting ->
                 GameSettingRow(setting, gameSettings) { announce(it) }
+            }
+
+            // Помощник стоит отдельно от договорённостей: там то, о чём
+            // сговариваются до стола, а тут — чего игрок хочет от приложения.
+            // Свалить их в один список значило бы сказать, что это одно и то же.
+            if (game == GAME_THOUSAND) {
+                Spacer(Modifier.height(8.dp))
+                Text("Помощь за столом", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                GameSettingRow(AUTO_PRAISE, gameSettings) { announce(it) }
             }
 
             Spacer(Modifier.height(16.dp))
