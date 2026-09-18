@@ -227,6 +227,99 @@ class ThousandMatchTest {
     }
 
     @Test
+    fun `самосвал — ровно пятьсот пятьдесят пять сгорает в ноль`() {
+        val match = ThousandMatch.forTesting(
+            scores = listOf(455, 300),
+            rules = ThousandRules(samosval = true),
+        )
+        val summary = match.play(declarer = 0, bid = 100, points = listOf(110, 10), tricks = listOf(8, 3))
+
+        assertEquals(listOf(0), summary.samosvaled)
+        assertEquals(-455, summary.deltas[0], "виден и заказ, и сгоревший счёт")
+        assertEquals(0, match.scores[0])
+        assertEquals(310, match.scores[1], "самосвал соседа не задевает: тот пишет своё")
+    }
+
+    @Test
+    fun `перелёт через пятьсот пятьдесят пять самосвалом не считается`() {
+        // Самосвал — попадание в само число, а не перевал через него.
+        val match = ThousandMatch.forTesting(
+            scores = listOf(456, 300),
+            rules = ThousandRules(samosval = true),
+        )
+        val summary = match.play(declarer = 0, bid = 100, points = listOf(110, 10), tricks = listOf(8, 3))
+
+        assertEquals(emptyList(), summary.samosvaled)
+        assertEquals(556, match.scores[0])
+    }
+
+    @Test
+    fun `без договорённости пятьсот пятьдесят пять стоит как есть`() {
+        val match = ThousandMatch.forTesting(scores = listOf(455, 300))
+        val summary = match.play(declarer = 0, bid = 100, points = listOf(110, 10), tricks = listOf(8, 3))
+
+        assertEquals(emptyList(), summary.samosvaled)
+        assertEquals(555, match.scores[0])
+    }
+
+    @Test
+    fun `самосвал смотрит на счёт по итогу кона, после болтов`() {
+        // Болт — третьего набралось, минус 120 — и только после этого счёт
+        // дорос ровно до 555. Такой самосвал тоже срабатывает: он смотрит на
+        // то, что человек набрал за партию, а не за один кон.
+        val match = ThousandMatch.forTesting(
+            scores = listOf(675, 300),
+            bolts = listOf(2, 0),
+            rules = ThousandRules(samosval = true),
+        )
+        val summary = match.play(declarer = 1, bid = 100, points = listOf(0, 110), tricks = listOf(0, 11))
+
+        assertEquals(listOf(0), summary.bolted)
+        assertEquals(listOf(0), summary.samosvaled)
+        assertEquals(0, match.scores[0])
+    }
+
+    @Test
+    fun `третья роспись — минус сто двадцать, счётчик обнуляется`() {
+        val match = ThousandMatch.forTesting(
+            scores = listOf(500, 200),
+            rules = ThousandRules(raspisPenalty = true),
+            raspises = listOf(2, 0),
+        )
+        val summary = match.record(0, bid = 105, points = intArrayOf(10, 20), tricks = intArrayOf(0, 0), raspised = 0)
+
+        assertEquals(0, summary.raspisPenalised)
+        assertEquals(-225, summary.deltas[0], "минус заказ и штраф за роспись — вместе")
+        assertEquals(275, match.scores[0])
+        assertEquals(0, match.raspises[0])
+    }
+
+    @Test
+    fun `роспись без договорённости счётчика не ведёт`() {
+        val match = ThousandMatch.forTesting(scores = listOf(500, 200), raspises = listOf(2, 0))
+        val summary = match.record(0, bid = 105, points = intArrayOf(10, 20), tricks = intArrayOf(0, 0), raspised = 0)
+
+        assertNull(summary.raspisPenalised)
+        assertEquals(2, match.raspises[0], "по книге росписи не считаются")
+        assertEquals(395, match.scores[0])
+    }
+
+    @Test
+    fun `сыгранный кон росписей не прибавляет`() {
+        // Считаются именно отказы заказчика от своего заказа, а не коны
+        // вообще: счётчик не должен доходить до штрафа сам по себе.
+        val match = ThousandMatch.forTesting(
+            scores = listOf(500, 200),
+            rules = ThousandRules(raspisPenalty = true),
+            raspises = listOf(2, 0),
+        )
+        match.play(declarer = 0, bid = 100, points = listOf(110, 10), tricks = listOf(8, 3))
+
+        assertEquals(2, match.raspises[0])
+        assertEquals(600, match.scores[0])
+    }
+
+    @Test
     fun `вдвоём бочка торгуется как все — обязательства на потолок нет`() {
         val two = ThousandRound.forTesting(
             hands = List(2) { listOf(c(Rank.NINE, Suit.SPADES)) },

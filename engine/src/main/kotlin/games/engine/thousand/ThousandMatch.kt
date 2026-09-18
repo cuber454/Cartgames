@@ -11,6 +11,12 @@ const val BOLT_PENALTY = 120
 /** Сколько болтов копить до штрафа. */
 const val BOLTS_TO_PENALTY = 3
 
+/** Счёт, на котором срабатывает самосвал. */
+const val SAMOSVAL_AT = 555
+
+/** Сколько росписей копить до штрафа. */
+const val RASPISES_TO_PENALTY = 3
+
 /** Сколько конов даётся на бочке, прежде чем с неё слетишь. */
 const val BARREL_TRIES = 3
 
@@ -34,6 +40,10 @@ data class RoundSummary(
     val winner: Int?,
     /** Кто расписался: кон кончился отказом, а не розыгрышем. */
     val raspised: Int? = null,
+    /** У кого сгорел счёт от самосвала — договорённость сторон. */
+    val samosvaled: List<Int> = emptyList(),
+    /** Кому этот кон принёс штраф за третью роспись. */
+    val raspisPenalised: Int? = null,
 )
 
 /**
@@ -48,11 +58,16 @@ class ThousandMatch(
     val playerCount: Int = 2,
     val target: Int = 1000,
     firstBidder: Int = 0,
+    /** Договорённости сторон: с ними партию начали и по ним её доигрывают. */
+    val rules: ThousandRules = ThousandRules(),
 ) {
     val scores = IntArray(playerCount)
 
     /** Болты: прочерки за коны без взяток. Три — и минус 120. */
     val bolts = IntArray(playerCount)
+
+    /** Росписи: отказы заказчика от своего заказа. Три — и минус 120. */
+    val raspises = IntArray(playerCount)
 
     /** Кто на бочке. Бочка одна на всех — второй пришедший сбивает первого. */
     var barrelSeat: Int? = null
@@ -177,6 +192,34 @@ class ThousandMatch(
             }
         }
 
+        // Штраф за роспись — договорённость сторон: третья роспись за партию
+        // стоит 120, как третий болт. Роспись — отказ заказчика от своего
+        // заказа, и наказан он уже минус заказом; счётчик считает именно
+        // отказы. Как и у болтов, после штрафа счёт начинается заново.
+        var raspisPenalised: Int? = null
+        if (rules.raspisPenalty && winner == null && raspised != null) {
+            raspises[raspised]++
+            if (raspises[raspised] >= RASPISES_TO_PENALTY) {
+                scores[raspised] -= BOLT_PENALTY
+                deltas[raspised] -= BOLT_PENALTY
+                raspises[raspised] = 0
+                raspisPenalised = raspised
+            }
+        }
+
+        // Самосвал — тоже договорённость сторон: ровно 555 — и счёт сгорает в
+        // ноль. Считается по итогу кона, после болтов и штрафов: самосвал
+        // смотрит на то, что человек набрал за партию, а не за один кон.
+        val samosvaled = mutableListOf<Int>()
+        if (rules.samosval && winner == null) {
+            for (seat in 0 until playerCount) {
+                if (scores[seat] != SAMOSVAL_AT) continue
+                deltas[seat] -= SAMOSVAL_AT
+                scores[seat] = 0
+                samosvaled += seat
+            }
+        }
+
         // Победа: перевалил за тысячу — выиграл.
         if (winner == null) {
             winner = (0 until playerCount).firstOrNull { scores[it] >= target }
@@ -212,6 +255,8 @@ class ThousandMatch(
             barrelSat = sat,
             winner = winner,
             raspised = raspised,
+            samosvaled = samosvaled.toList(),
+            raspisPenalised = raspisPenalised,
         )
     }
 
@@ -229,9 +274,12 @@ class ThousandMatch(
             roundsPlayed: Int,
             nextFirst: Int,
             winner: Int?,
-        ): ThousandMatch = ThousandMatch(playerCount, 1000, nextFirst).also { match ->
+            rules: ThousandRules = ThousandRules(),
+            raspises: List<Int> = List(playerCount) { 0 },
+        ): ThousandMatch = ThousandMatch(playerCount, 1000, nextFirst, rules).also { match ->
             scores.forEachIndexed { seat, value -> match.scores[seat] = value }
             bolts.forEachIndexed { seat, value -> match.bolts[seat] = value }
+            raspises.forEachIndexed { seat, value -> match.raspises[seat] = value }
             match.barrelSeat = barrelSeat
             match.barrelTries = barrelTries
             match.roundsPlayed = roundsPlayed
@@ -246,9 +294,12 @@ class ThousandMatch(
             barrelSeat: Int? = null,
             barrelTries: Int = 0,
             firstBidder: Int = 0,
-        ): ThousandMatch = ThousandMatch(scores.size, 1000, firstBidder).also { match ->
+            rules: ThousandRules = ThousandRules(),
+            raspises: List<Int> = List(scores.size) { 0 },
+        ): ThousandMatch = ThousandMatch(scores.size, 1000, firstBidder, rules).also { match ->
             scores.forEachIndexed { seat, value -> match.scores[seat] = value }
             bolts.forEachIndexed { seat, value -> match.bolts[seat] = value }
+            raspises.forEachIndexed { seat, value -> match.raspises[seat] = value }
             match.barrelSeat = barrelSeat
             match.barrelTries = barrelTries
         }

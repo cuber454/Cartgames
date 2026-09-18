@@ -23,7 +23,17 @@ import games.engine.Suit
 object ThousandSave {
 
     /** Версия формата. Меняется вместе с составом полей. */
-    const val FORMAT = 1
+    const val FORMAT = 2
+
+    /**
+     * Записи какой давности ещё читаются.
+     *
+     * Версия 2 добавила договорённости сторон и счётчик росписей, и обе
+     * строки в старой записи означают ровно то же, что и умолчание: партия,
+     * начатая по книге, с нулём росписей. Поэтому запись версии 1 читается
+     * без потерь, и брошенная партия после обновления не пропадает.
+     */
+    private val READABLE_FORMATS = 1..FORMAT
 
     private const val HEADER = "game thousand"
     private const val DASH = "-"
@@ -41,6 +51,11 @@ object ThousandSave {
         appendLine("players ${match.playerCount}")
         appendLine("scores ${match.scores.joinToString(" ")}")
         appendLine("bolts ${match.bolts.joinToString(" ")}")
+        appendLine("raspises ${match.raspises.joinToString(" ")}")
+        // Договорённости сторон пишутся вместе с партией: поднятая с диска
+        // партия должна доигрываться по тем правилам, по каким её начали.
+        appendLine("samosval ${if (match.rules.samosval) 1 else 0}")
+        appendLine("raspisPenalty ${if (match.rules.raspisPenalty) 1 else 0}")
         appendLine("barrel ${match.barrelSeat?.toString() ?: DASH}")
         appendLine("barrelTries ${match.barrelTries}")
         appendLine("rounds ${match.roundsPlayed}")
@@ -122,7 +137,7 @@ object ThousandSave {
             }
         }
 
-        if (fields["format"]?.toIntOrNull() != FORMAT) return null
+        if (fields["format"]?.toIntOrNull() !in READABLE_FORMATS) return null
         val playerCount = fields["players"]?.toIntOrNull() ?: return null
         if (playerCount !in 2..3) return null
         // Руки идут подряд, без пропусков: hand0, hand1, ... Иначе игрок за
@@ -131,6 +146,14 @@ object ThousandSave {
 
         val scores = parseInts(fields["scores"], playerCount) ?: return null
         val bolts = parseInts(fields["bolts"], playerCount) ?: return null
+        // В записи версии 1 счётчика росписей нет, и это не поломка: партия
+        // шла без штрафа за них, то есть с нулём.
+        val raspises = fields["raspises"]?.let { parseInts(it, playerCount) ?: return null }
+            ?: List(playerCount) { 0 }
+        val rules = ThousandRules(
+            samosval = fields["samosval"]?.let { it == "1" } ?: false,
+            raspisPenalty = fields["raspispenalty"]?.let { it == "1" } ?: false,
+        )
         val points = parseInts(fields["points"], playerCount) ?: return null
         val marriage = parseInts(fields["marriage"], playerCount) ?: return null
         val tricks = parseInts(fields["tricks"], playerCount) ?: return null
@@ -184,6 +207,8 @@ object ThousandSave {
             roundsPlayed = rounds,
             nextFirst = next,
             winner = winner,
+            rules = rules,
+            raspises = raspises,
         )
         return Saved(match, round, recorded)
     }

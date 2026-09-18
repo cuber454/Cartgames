@@ -100,6 +100,52 @@ class ThousandSaveTest {
         assertTrue(saved.round.isFinished(saved.round) == false)
     }
 
+    @Test
+    fun `договорённости сторон и счётчик росписей переживают запись`() {
+        val rules = ThousandRules(samosval = true, raspisPenalty = true)
+        val match = ThousandMatch.forTesting(
+            scores = listOf(300, 400),
+            rules = rules,
+            raspises = listOf(2, 1),
+        )
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, match.startRound(Random(9)))))
+
+        assertEquals(rules, saved.match.rules)
+        assertEquals(listOf(2, 1), saved.match.raspises.toList())
+    }
+
+    @Test
+    fun `партия по книге пишется без договорённостей`() {
+        val match = ThousandMatch.forTesting(scores = listOf(300, 400))
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, match.startRound(Random(9)))))
+
+        assertTrue(saved.match.rules.byTheBook)
+        assertEquals(listOf(0, 0), saved.match.raspises.toList())
+    }
+
+    @Test
+    fun `запись прежней версии поднимается как партия по книге`() {
+        // Запись версии 1 не знала ни договорённостей, ни счётчика росписей.
+        // Обе недостающие строки означают ровно то же, что умолчание, —
+        // поэтому брошенная партия после обновления не пропадает.
+        val match = ThousandMatch.forTesting(scores = listOf(300, 400), bolts = listOf(1, 0))
+        val old = ThousandSave.write(match, match.startRound(Random(4)))
+            .lineSequence()
+            .filterNot { line ->
+                val key = line.substringBefore(' ')
+                key == "raspises" || key == "samosval" || key == "raspisPenalty"
+            }
+            .joinToString("\n")
+            .replace("format ${ThousandSave.FORMAT}", "format 1")
+
+        val restored = ThousandSave.read(old)
+        assertNotNull(restored, "запись версии 1 должна читаться")
+        assertEquals(300, restored.match.scores[0])
+        assertEquals(1, restored.match.bolts[0])
+        assertTrue(restored.match.rules.byTheBook)
+        assertEquals(listOf(0, 0), restored.match.raspises.toList())
+    }
+
     /** Раздача целиком: десять на десять и два прикупа по две — все 24 карты. */
     private fun dealtRound(): ThousandRound {
         val deck = fullDeck24()

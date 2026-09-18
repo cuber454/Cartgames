@@ -40,7 +40,9 @@ class ThousandSession(context: Context) {
 
     private val appContext = context.applicationContext
 
-    var match by mutableStateOf(ThousandMatch(THOUSAND_PLAYERS))
+    // Договорённости берутся здесь, на новую партию, и дальше живут в самом
+    // матче: переключение настройки посреди партии её не меняет.
+    var match by mutableStateOf(ThousandMatch(THOUSAND_PLAYERS, rules = loadThousandRules(appContext)))
         private set
 
     var round by mutableStateOf(match.startRound())
@@ -120,7 +122,7 @@ class ThousandSession(context: Context) {
      * или сказать «продолжаем», — здесь для этого нет ни голоса, ни настроек.
      */
     fun restart() {
-        match = ThousandMatch(THOUSAND_PLAYERS)
+        match = ThousandMatch(THOUSAND_PLAYERS, rules = loadThousandRules(appContext))
         round = match.startRound()
         recorded = false
         summary = null
