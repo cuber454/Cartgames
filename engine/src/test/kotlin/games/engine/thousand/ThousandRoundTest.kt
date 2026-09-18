@@ -14,6 +14,15 @@ class ThousandRoundTest {
 
     private fun c(rank: Rank, suit: Suit) = Card(rank, suit)
 
+    /** Рука, с которой золотой кон и объявляют: все четыре марьяжа на десяти картах. */
+    private fun goldenHand(): List<Card> = listOf(
+        c(Rank.KING, Suit.SPADES), c(Rank.QUEEN, Suit.SPADES),
+        c(Rank.KING, Suit.CLUBS), c(Rank.QUEEN, Suit.CLUBS),
+        c(Rank.KING, Suit.DIAMONDS), c(Rank.QUEEN, Suit.DIAMONDS),
+        c(Rank.KING, Suit.HEARTS), c(Rank.QUEEN, Suit.HEARTS),
+        c(Rank.NINE, Suit.SPADES), c(Rank.NINE, Suit.CLUBS),
+    )
+
     @Test
     fun `в колоде 24 карты и 120 очков`() {
         val deck = fullDeck24()
@@ -285,6 +294,68 @@ class ThousandRoundTest {
         round.apply(0, ThousandMove.Discard(listOf(c(Rank.ACE, Suit.HEARTS))))
 
         assertFalse(round.hadAllAces(0), "туз ушёл защитнику, и тузов осталось три")
+    }
+
+    @Test
+    fun `золотой кон объявляется вместо первой ставки`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(goldenHand(), listOf(c(Rank.NINE, Suit.CLUBS))),
+            goldenAllowed = true,
+        )
+        assertTrue(round.legalMoves(0).contains(ThousandMove.Golden))
+
+        round.apply(0, ThousandMove.Golden)
+
+        assertTrue(round.golden)
+        assertEquals(0, round.declarer)
+        assertEquals(120, round.currentBid, "золотой кон играется на весь заказ")
+        assertEquals(Phase.PLAY, round.phase, "торга и прикупа в нём нет")
+        assertEquals(0, round.turn, "заказчик ходит первым")
+        assertEquals(10, round.handOf(0).size, "прикуп не берут — рука та же, что сдана")
+    }
+
+    @Test
+    fun `без договорённости золотой кон не объявить`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(goldenHand(), listOf(c(Rank.NINE, Suit.CLUBS))),
+        )
+        assertFalse(round.legalMoves(0).contains(ThousandMove.Golden))
+    }
+
+    @Test
+    fun `слабая рука золотого кона не даёт`() {
+        // Золотой кон — не ставка вслепую: объявить его можно только с рукой,
+        // которая заказ уже держит.
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(c(Rank.NINE, Suit.SPADES), c(Rank.JACK, Suit.CLUBS)),
+                listOf(c(Rank.NINE, Suit.CLUBS), c(Rank.JACK, Suit.DIAMONDS)),
+            ),
+            goldenAllowed = true,
+        )
+        assertFalse(round.legalMoves(0).contains(ThousandMove.Golden))
+    }
+
+    @Test
+    fun `после первой ставки золотой кон не объявить`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(goldenHand(), goldenHand()),
+            goldenAllowed = true,
+        )
+        round.apply(0, ThousandMove.Bid(100))
+
+        assertFalse(
+            round.legalMoves(1).contains(ThousandMove.Golden),
+            "золотой кон и значит «без торга» — после ставки он не золотой",
+        )
+    }
+
+    @Test
+    fun `рука золотого кона считается с марьяжами`() {
+        val round = ThousandRound.forTesting(hands = listOf(goldenHand(), emptyList()))
+
+        assertEquals(280, round.handValue(0) - round.handOf(0).sumOf { it.points })
+        assertTrue(round.handValue(0) >= 120)
     }
 
     @Test

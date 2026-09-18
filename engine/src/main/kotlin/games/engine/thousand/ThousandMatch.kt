@@ -20,6 +20,12 @@ const val RASPISES_TO_PENALTY = 3
 /** Сколько стоит тузовый марьяж: четыре туза на руке и хотя бы одна взятка. */
 const val ACE_MARRIAGE_POINTS = 200
 
+/**
+ * Во сколько раз дороже золотой кон — и заказ в нём, и запись защитников,
+ * и болт. Один множитель на всё: кон либо двойной, либо нет.
+ */
+const val GOLDEN_MULTIPLIER = 2
+
 /** Сколько конов даётся на бочке, прежде чем с неё слетишь. */
 const val BARREL_TRIES = 3
 
@@ -58,6 +64,8 @@ data class RoundSummary(
     val raspisPenalised: Int? = null,
     /** Кому этот кон принёс тузовый марьяж — договорённость сторон. */
     val aceMarried: List<Int> = emptyList(),
+    /** Кон игрался золотым — договорённость сторон. */
+    val golden: Boolean = false,
 )
 
 /**
@@ -103,7 +111,7 @@ class ThousandMatch(
 
     /** Раздать кон. Матч помнит, кто на бочке, — кон обязан это знать. */
     fun startRound(random: Random = Random.Default): ThousandRound =
-        ThousandRound.start(random, playerCount, nextFirst, barrelSeat)
+        ThousandRound.start(random, playerCount, nextFirst, barrelSeat, rules.golden)
 
     /** Разыграть кон до конца: записать его в счёт и решить, что дальше. */
     fun finishRound(round: ThousandRound): RoundSummary {
@@ -112,7 +120,7 @@ class ThousandMatch(
         val points = IntArray(playerCount) { round.roundPoints(it) }
         val tricks = IntArray(playerCount) { round.tricksOf(it) }
         val allAces = (0 until playerCount).filter { round.hadAllAces(it) }
-        return record(declarer, round.currentBid, points, tricks, round.raspised, allAces)
+        return record(declarer, round.currentBid, points, tricks, round.raspised, allAces, round.golden)
     }
 
     /**
@@ -130,6 +138,8 @@ class ThousandMatch(
         raspised: Int? = null,
         /** У кого к началу розыгрыша были на руке все четыре туза. */
         allAces: List<Int> = emptyList(),
+        /** Кон игрался золотым: без торга, без прикупа, за двойные очки. */
+        golden: Boolean = false,
     ): RoundSummary {
         check(winner == null) { "матч уже выигран" }
         roundsPlayed++
@@ -188,6 +198,9 @@ class ThousandMatch(
         // заказ, защитники — своё, округлённое до пяти. Бочку из этого списка
         // выбрасываем: у неё свой счёт, см. выше.
         if (winner == null) {
+            // Золотой кон дороже вдвое — и заказ, и запись защитников, и
+            // штраф за роспись: игра дороже целиком, а не в одной строке.
+            val rate = if (golden) GOLDEN_MULTIPLIER else 1
             for (seat in 0 until playerCount) {
                 if (seat == barrel) continue
                 val delta = when {
@@ -195,10 +208,10 @@ class ThousandMatch(
                     // кто его брал, соперники получают по половине заказа.
                     // Взятки не доиграны, и очков за них не пишет никто.
                     raspised != null ->
-                        if (seat == declarer) -bid else ThousandRound.raspisShare(bid)
+                        if (seat == declarer) -bid * rate else ThousandRound.raspisShare(bid) * rate
 
-                    seat == declarer -> if (madeIt) bid else -bid
-                    else -> (roundPoints[seat] + 2) / 5 * 5
+                    seat == declarer -> if (madeIt) bid * rate else -bid * rate
+                    else -> (roundPoints[seat] + 2) / 5 * 5 * rate
                 }
                 deltas[seat] = delta
                 scores[seat] += delta
@@ -215,7 +228,10 @@ class ThousandMatch(
             for (seat in 0 until playerCount) {
                 if (winner != null) break
                 if (tricks[seat] > 0) continue
-                bolts[seat]++
+                // Болт за золотой кон — за два: дороже игра, дороже и
+                // прочерк в ней. Штраф за три болта при этом прежний:
+                // двойной счёт болтов, а не двойная цена трёх.
+                bolts[seat] += if (golden) GOLDEN_MULTIPLIER else 1
                 bolted += seat
                 if (bolts[seat] >= BOLTS_TO_PENALTY) {
                     scores[seat] -= BOLT_PENALTY
@@ -292,6 +308,7 @@ class ThousandMatch(
             samosvaled = samosvaled.toList(),
             raspisPenalised = raspisPenalised,
             aceMarried = aceMarried.toList(),
+            golden = golden,
         )
     }
 

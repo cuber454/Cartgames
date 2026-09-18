@@ -121,6 +121,53 @@ class ThousandSaveTest {
         assertFalse(saved.round.hadAllAces(1))
     }
 
+    @Test
+    fun `золотой кон переживает запись`() {
+        // Золотой кон меняет не только счёт, но и сам стол: прикуп не взят,
+        // сноса не было, карты у всех сданные. Поднять его обычным коном
+        // значило бы доигрывать другую партию.
+        val round = goldenRound()
+        val match = ThousandMatch.forTesting(
+            scores = listOf(0, 0),
+            rules = ThousandRules(golden = true),
+        )
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, round)))
+
+        assertTrue(saved.round.golden)
+        assertEquals(Phase.PLAY, saved.round.phase)
+        assertEquals(120, saved.round.currentBid)
+        assertEquals(round.handOf(0).size, saved.round.handOf(0).size)
+        assertEquals(round.handOf(0), saved.round.handOf(0))
+    }
+
+    @Test
+    fun `обычный кон золотым не поднимается`() {
+        val (match, round) = midRound(seed = 13)
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, round)))
+
+        assertFalse(saved.round.golden)
+    }
+
+    /**
+     * Раздача, в которой первый держит все четыре марьяжа, — с такой рукой
+     * золотой кон и объявляют. Все 24 карты на столе: прикуп не взят, и
+     * обе прикупные строки остаются нетронутыми.
+     */
+    private fun goldenRound(): ThousandRound {
+        val deck = fullDeck24()
+        val kings = deck.filter { it.rank == Rank.KING }
+        val queens = deck.filter { it.rank == Rank.QUEEN }
+        val rest = deck.filterNot { it.rank == Rank.KING || it.rank == Rank.QUEEN }
+        val round = ThousandRound.forTesting(
+            hands = listOf(kings + queens + rest.take(2), rest.drop(2).take(10)),
+            prikups = listOf(rest.drop(12).take(2), rest.drop(14).take(2)),
+            goldenAllowed = true,
+        )
+        round.apply(0, ThousandMove.Golden)
+        assertTrue(round.golden, "расклад для теста собран так, чтобы золотой кон объявился")
+        return round
+    }
+
     /**
      * Раздача, в которой все четыре туза у первого, а снос уже сделан: тузы
      * на руке, розыгрыш начат. В колоде 24 карты, и все они должны быть на
@@ -171,7 +218,7 @@ class ThousandSaveTest {
         // что умолчание, — поэтому брошенная партия после обновления не
         // пропадает.
         val missing = setOf(
-            "raspises", "samosval", "raspisPenalty", "aceMarriage", "allAces",
+            "raspises", "samosval", "raspisPenalty", "aceMarriage", "allAces", "golden",
         )
         val match = ThousandMatch.forTesting(scores = listOf(300, 400), bolts = listOf(1, 0))
         val old = ThousandSave.write(match, match.startRound(Random(4)))

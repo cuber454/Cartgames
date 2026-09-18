@@ -5,6 +5,7 @@ import games.engine.Rank
 import games.engine.Suit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -392,6 +393,64 @@ class ThousandMatchTest {
 
         assertEquals(emptyList(), summary.aceMarried)
         assertEquals(listOf(-105, 50), summary.deltas)
+    }
+
+    @Test
+    fun `золотой кон пишет двойные очки`() {
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0), rules = ThousandRules(golden = true))
+        val summary = match.record(
+            0, bid = 120, points = intArrayOf(120, 30), tricks = intArrayOf(6, 4), golden = true,
+        )
+
+        assertTrue(summary.golden)
+        assertEquals(
+            listOf(240, 60), summary.deltas,
+            "заказ выполнен — плюс 240, а защитнику его тридцать идут вдвое",
+        )
+    }
+
+    @Test
+    fun `проваленный золотой кон — минус двести сорок`() {
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0), rules = ThousandRules(golden = true))
+        val summary = match.record(
+            0, bid = 120, points = intArrayOf(100, 20), tricks = intArrayOf(5, 5), golden = true,
+        )
+
+        assertEquals(listOf(-240, 40), summary.deltas, "недобор в двойном коне стоит вдвое")
+    }
+
+    @Test
+    fun `договорённость разрешает золотой кон, но сама его не делает`() {
+        // Флаг говорит лишь о том, что объявить его можно. Кон, который
+        // играли обычным, обычным и запишется — иначе настройка меняла бы
+        // счёт уже сыгранных конов.
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0), rules = ThousandRules(golden = true))
+        val summary = match.record(0, bid = 120, points = intArrayOf(120, 30), tricks = intArrayOf(6, 4))
+
+        assertFalse(summary.golden)
+        assertEquals(listOf(120, 30), summary.deltas)
+    }
+
+    @Test
+    fun `болт в золотом коне считается за два`() {
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0), rules = ThousandRules(golden = true))
+        match.record(
+            0, bid = 120, points = intArrayOf(120, 0), tricks = intArrayOf(10, 0), golden = true,
+        )
+
+        assertEquals(2, match.bolts[1], "прочерк в двойном коне идёт за два")
+        assertEquals(0, match.bolts[0])
+    }
+
+    @Test
+    fun `роспись в золотом коне тоже двойная`() {
+        val match = ThousandMatch.forTesting(scores = listOf(200, 200), rules = ThousandRules(golden = true))
+        val summary = match.record(
+            0, bid = 120, points = intArrayOf(10, 20), tricks = intArrayOf(0, 0),
+            raspised = 0, golden = true,
+        )
+
+        assertEquals(listOf(-240, 120), summary.deltas, "заказ вдвое, и половина заказа вдвое")
     }
 
     @Test

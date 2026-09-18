@@ -40,7 +40,15 @@ val ACE_MARRIAGE = GameSetting(
     default = false,
 )
 
-val THOUSAND_SETTINGS: List<GameSetting> = listOf(SAMOSVAL, RASPIS_PENALTY, ACE_MARRIAGE)
+val GOLDEN = GameSetting(
+    key = "thousand.golden",
+    title = "Золотой кон",
+    about = "С рукой на 120 очков можно объявить кон без торга: заказ 120, прикуп не берут, очки двойные.",
+    activation = Activation.NEW_MATCH,
+    default = false,
+)
+
+val THOUSAND_SETTINGS: List<GameSetting> = listOf(SAMOSVAL, RASPIS_PENALTY, ACE_MARRIAGE, GOLDEN)
 
 /**
  * Договорённости, с которыми начинают партию.
@@ -55,5 +63,6 @@ fun loadThousandRules(context: Context): ThousandRules {
         samosval = store.value(SAMOSVAL),
         raspisPenalty = store.value(RASPIS_PENALTY),
         aceMarriage = store.value(ACE_MARRIAGE),
+        golden = store.value(GOLDEN),
     )
 }
