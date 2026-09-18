@@ -357,6 +357,11 @@ fun SettingsScreen(onExit: () -> Unit) {
             announce(if (value) "Звуки стола включены." else "Звуки стола выключены.")
         }
 
+        SettingSwitch("Сигналы", settings.signals) { value ->
+            save(settings.copy(signals = value))
+            announce(if (value) "Сигналы включены." else "Сигналы выключены.")
+        }
+
         SettingSwitch("Вибрация на ход соперника", settings.vibration) { value ->
             save(settings.copy(vibration = value))
             announce(if (value) "Вибрация на ход соперника включена." else "Вибрация на ход соперника выключена.")

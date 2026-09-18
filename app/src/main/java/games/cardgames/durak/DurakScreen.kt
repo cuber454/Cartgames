@@ -238,12 +238,30 @@ fun DurakScreen(
         saveScore(context, next)
         // Партия доиграна — продолжать нечего, сохранение убираем.
         session.forgetSaved()
-        voice.say(finishPhrase(game, next))
+        // Сигнал исхода играет один: ничья остаётся без него, у неё нет
+        // своей ноты, а придумывать ей звук «ни то ни сё» незачем.
+        val signalMs = if (!settings.signals) {
+            0L
+        } else {
+            when (result) {
+                Outcome.WIN -> { sounds.win(); TableSounds.WIN_MS.toLong() }
+                Outcome.LOSS -> { sounds.lose(); TableSounds.LOSE_MS.toLong() }
+                else -> 0L
+            }
+        }
+        voice.say(
+            finishPhrase(game, next),
+            afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
+        )
     }
 
     fun newGame() {
         session.restart(transferAllowed = settings.transfer)
         if (settings.sounds) sounds.deal()
+        // Сигнал начала идёт вместе с шорохом раздачи, а не после него:
+        // ноты и шум не перекрывают друг друга на слух, а разведённые по
+        // времени они растянули бы паузу перед фразой вдвое.
+        if (settings.signals) sounds.start()
         // Раздача шумит почти семь десятых секунды: скажи мы сразу — голос
         // утонул бы в шорохе карт. Выключенные звуки — ждать нечего.
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
@@ -295,9 +313,12 @@ fun DurakScreen(
             played = true
             botCards++
         }
-        // Ход вернулся к игроку — короткий толчок: слышно не всегда, а тут
-        // понятно без звука, что ждут тебя.
-        if (played && settings.vibration && game.legalMoves(PLAYER).isNotEmpty()) vibrations.tap()
+        // Ход вернулся к игроку — короткий толчок и тихая нота: толчок
+        // слышно не всегда, а тут понятно без слов, что ждут тебя.
+        if (played && game.legalMoves(PLAYER).isNotEmpty()) {
+            if (settings.vibration) vibrations.tap()
+            if (settings.signals) sounds.turn()
+        }
         finishIfOver()
         // Стол перед твоим ходом: что лежит и что из этого отбито. Реплики
         // бота называют карты по одной, и по одной они складываются в

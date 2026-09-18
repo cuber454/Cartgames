@@ -116,6 +116,74 @@ def take_cards(rng):
     return normalize([b * e for b, e in zip(body, env)], 0.65)
 
 
+def note(semitones):
+    """Частота в полутонах от ля первой октавы (440 Гц)."""
+    return 440.0 * 2 ** (semitones / 12.0)
+
+
+def tone(freq, seconds, decay=8.0, harmonics=(1.0, 0.30, 0.10)):
+    """Нота: синус с обертонами и затуханием — колокольчик, а не гудок."""
+    out = []
+    count = int(RATE * seconds)
+    for i in range(count):
+        t = i / RATE
+        value = sum(
+            amp * math.sin(2 * math.pi * freq * (n + 1) * t)
+            for n, amp in enumerate(harmonics)
+        )
+        out.append(value * math.exp(-decay * t))
+    return out
+
+
+def melody(notes, gap=0.01):
+    """Мелодия: ноты подряд, каждая со своим затуханием."""
+    out = []
+    for freq, seconds in notes:
+        out += tone(freq, seconds)
+        out += silence(gap)
+    return out
+
+
+def glide(start_hz, end_hz, seconds, decay=5.0):
+    """Скользящий тон: падение или подъём высоты за одну ноту."""
+    out = []
+    count = int(RATE * seconds)
+    phase = 0.0
+    for i in range(count):
+        freq = start_hz + (end_hz - start_hz) * (i / count)
+        phase += 2 * math.pi * freq / RATE
+        out.append(math.sin(phase) * math.exp(-decay * i / RATE))
+    return out
+
+
+def signal_start():
+    """Начало: восходящая квинта — «садимся играть»."""
+    return normalize(melody([(note(0), 0.16), (note(7), 0.30)], gap=0.0), 0.6)
+
+
+def signal_turn():
+    """Твой ход: одна тихая нота. Звучит чаще всех — быть нежнее некуда."""
+    return normalize(tone(note(12), 0.09, decay=20.0, harmonics=(1.0, 0.15)), 0.45)
+
+
+def signal_win():
+    """Победа: мажорное трезвучие вверх."""
+    return normalize(melody(
+        [(note(0), 0.13), (note(4), 0.13), (note(7), 0.13), (note(12), 0.45)],
+        gap=0.0,
+    ), 0.6)
+
+
+def signal_lose():
+    """Проигрыш: две ноты вниз, мажор — в минор."""
+    return normalize(melody([(note(3), 0.18), (note(0), 0.45)], gap=0.0), 0.6)
+
+
+def signal_bolt():
+    """Болт: низкое падение — «свалился»."""
+    return normalize(glide(300.0, 90.0, 0.30), 0.6)
+
+
 def save(name, samples):
     path = os.path.normpath(os.path.join(OUT_DIR, name))
     with wave.open(path, "w") as w:
@@ -134,6 +202,12 @@ def main():
     save("card.wav", card_tap(rng))
     save("deal.wav", deal_shuffle(rng))
     save("take.wav", take_cards(rng))
+    # Сигналы: не шум стола, а короткие ноты — о событиях, а не о картах.
+    save("start.wav", signal_start())
+    save("turn.wav", signal_turn())
+    save("win.wav", signal_win())
+    save("lose.wav", signal_lose())
+    save("bolt.wav", signal_bolt())
 
 
 if __name__ == "__main__":
