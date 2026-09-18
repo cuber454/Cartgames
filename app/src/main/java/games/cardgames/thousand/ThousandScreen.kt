@@ -297,8 +297,12 @@ fun ThousandScreen(
      * [note] — приписка к фразе о том, чего ход не сделал. Одной фразой, а не
      * второй речью следом: [TableVoice.sayRequested] перебивает сказанное, и
      * отдельная приписка съела бы сам ход.
+     *
+     * [aloud] — ход сделан не рукой игрока, а помощником. Такой ход сказать
+     * обязательно: скринридеру тут нечего читать, игрок ничего не нажимал, и
+     * без этой фразы с руки молча уходит карта.
      */
-    fun play(move: ThousandMove, note: String = "") {
+    fun play(move: ThousandMove, note: String = "", aloud: Boolean = false) {
         val round = session.round
         val tricksBefore = round.tricksPlayed().size
         // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
@@ -322,7 +326,12 @@ fun ThousandScreen(
             // и не то, чья это взятка. Сказать это вполголоса, «для Повтора»,
             // значит оставить игрока выяснять это самому — а взятку он у себя
             // как раз и не слышит. Поэтому такие фразы звучат всегда.
-            aloud = taken != null || trick.isNotEmpty(),
+            //
+            // Приписка о марьяже — из того же ряда: она отвечает не на
+            // нажатие, а на то, чего ход не сделал, и молча потерять её
+            // значит потерять марьяж. Игрок узнал бы о нём только по счёту
+            // в конце кона (THOUSAND.md, 2.5).
+            aloud = aloud || taken != null || trick.isNotEmpty() || note.isNotEmpty(),
         )
         session.persist()
         finishIfOver()
@@ -463,7 +472,10 @@ fun ThousandScreen(
                 // Дослушиваем бота: он только что сходил, и его фразу перебивать
                 // незачем — своя всё равно пойдёт после паузы.
                 delay(voice.waitMs())
-                play(praise)
+                // Вслух обязательно: ход сделал помощник, а не игрок. Скринридеру
+                // тут читать нечего — карту никто не нажимал, — и «для Повтора»
+                // значит, что с руки молча ушла карта и объявился козырь.
+                play(praise, aloud = true)
             }
         }
 
@@ -983,7 +995,11 @@ private fun ownPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
         if (prikup.isEmpty()) "Берёшь прикуп ${move.index + 1}."
         else "Берёшь прикуп ${move.index + 1}: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
-    is ThousandMove.Praise -> "Хвалишь ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    // Карта названа намеренно: хвалить можно и королём, и дамой, а на стол
+    // уходит ровно одна из них — без имени игрок ищет пропажу перебором руки.
+    is ThousandMove.Praise ->
+        "Хвалишь ${move.card.suit.spoken}: на стол уходит ${move.card.spoken()}. " +
+            "Козырь — ${move.card.suit.spoken}."
     ThousandMove.Golden -> "Объявляешь золотой кон: заказ 120, прикуп не берёшь, очки двойные."
     ThousandMove.Raspis -> "Расписываешься."
     is ThousandMove.Play -> "Кладёшь ${move.card.spoken()}."
