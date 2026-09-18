@@ -53,8 +53,7 @@ import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
-import games.cardgames.speech.tileVerdict
-import games.cardgames.speech.verdictOf
+import games.cardgames.speech.spokenVerdict
 import games.cardgames.ui.HandTile
 import games.cardgames.ui.TileFace
 import games.cardgames.ui.TableGesture
@@ -440,6 +439,14 @@ fun KozelScreen(
     // кости, которыми сейчас можно сходить, наверх не поднимаются. Подсказка
     // осталась, но словами: подпись «не подходит» и приглушённая кость.
     val playable: Set<Tile> = moves.filterIsInstance<KozelMove.Place>().map { it.tile }.toSet()
+
+    // Молчим о вердикте, только когда решать сейчас не нам. Пустой набор —
+    // это не «решать нечего», а «ни одна не подходит»: во время добора из
+    // базара ход у игрока есть, но он один — взять. Отличить одно от другого
+    // по набору нельзя, поэтому смотрим на очередь, а не на набор.
+    val deciding = !round.finished && round.turn == PLAYER
+    fun verdictFor(tile: Tile): Boolean? = if (deciding) tile in playable else null
+
     val hand = settings.tileOrder.sort(round.handOf(PLAYER))
 
     // Кость, до которой игрок дошёл жестом. Это не выбор кости, а её чтение:
@@ -464,7 +471,7 @@ fun KozelScreen(
         }
         cursor = next
         val tile = hand[next]
-        voice.say("${next + 1} из ${hand.size}: ${tile.spoken()}${tileVerdict(tile, playable)}.")
+        voice.say("${next + 1} из ${hand.size}: ${tile.spoken()}${spokenVerdict(verdictFor(tile))}.")
     }
 
     // Где на экране лежит полоса стола. Жест вбок её обходит: по столу водят
@@ -592,7 +599,7 @@ fun KozelScreen(
                 itemsIndexed(hand) { index, tile ->
                     HandTile(
                         tile = tile,
-                        playable = verdictOf(tile, playable),
+                        playable = verdictFor(tile),
                         tileWidth = tileWidth,
                         tileHeight = tileHeight,
                         largeText = settings.largeText,
