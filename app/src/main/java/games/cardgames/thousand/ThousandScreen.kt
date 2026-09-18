@@ -472,10 +472,15 @@ fun ThousandScreen(
                 // Дослушиваем бота: он только что сходил, и его фразу перебивать
                 // незачем — своя всё равно пойдёт после паузы.
                 delay(voice.waitMs())
+                // Пока помощник дослушивал, игрок мог опередить его: нажатая
+                // карта уходит на стол его ходом, и объявлять марьяж после
+                // этого нечем. Тогда помощник молчит — решение уже принято, и
+                // второй ход поверх него был бы ходом за игрока.
+                val stillMine = cardPraise == null && praise in round.legalMoves(PLAYER)
                 // Вслух обязательно: ход сделал помощник, а не игрок. Скринридеру
                 // тут читать нечего — карту никто не нажимал, — и «для Повтора»
                 // значит, что с руки молча ушла карта и объявился козырь.
-                play(praise, aloud = true)
+                if (stillMine) play(praise, aloud = true)
             }
         }
 
@@ -767,7 +772,10 @@ fun ThousandScreen(
                 Button(
                     onClick = {
                         val only = praises.singleOrNull()
-                        if (only != null) play(only) else praiseOpen = true
+                        // Единственный марьяж — сразу, без диалога; вслух по
+                        // той же причине, что и в диалогах ниже: кнопка не
+                        // говорит, что ушло на стол и какой козырь объявлен.
+                        if (only != null) play(only, aloud = true) else praiseOpen = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Хвалить марьяж") }
@@ -889,7 +897,10 @@ fun ThousandScreen(
                         TextButton(
                             onClick = {
                                 praiseOpen = false
-                                play(praise)
+                                // Вслух — как и в диалоге карты: нажатие
+                                // скринридер прочитает сам, а чем обошлось —
+                                // нет (см. play, aloud).
+                                play(praise, aloud = true)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Хвалить: ${praise.card.suit.spoken}") }
@@ -920,7 +931,10 @@ fun ThousandScreen(
                 TextButton(
                     onClick = {
                         cardPraise = null
-                        play(praise)
+                        // Вслух: нажатие скринридер прочитает сам («Хвалить»),
+                        // а вот чем это обошлось — что ушло на стол и какой
+                        // масти теперь козырь — не скажет никто, кроме нас.
+                        play(praise, aloud = true)
                     },
                 ) { Text("Хвалить") }
             },
