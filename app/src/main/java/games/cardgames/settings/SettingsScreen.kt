@@ -16,6 +16,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -56,8 +57,8 @@ private const val SAMPLE = "Так будет звучать игра. Козы�
 /** Чей голос выбирают. Своя строка у каждого, кто за столом говорит. */
 private enum class VoiceSlot(val title: String, val inherit: String) {
     APP("Голос приложения", "системный"),
-    DURAK("Голос бота в дураке", "как у приложения"),
-    THOUSAND("Голос бота в тысяче", "как у приложения"),
+    DURAK("Голос соперника в дураке", "как у приложения"),
+    THOUSAND("Голос соперника в тысяче", "как у приложения"),
 }
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
@@ -442,9 +443,36 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 announce(whoSpeaksPhrase(next))
             }
 
-            SettingSwitch("Реплики бота", settings.botTalk) { value ->
+            // Имя соперника — единственная строка настроек, которую не
+            // переключают, а набирают: имя из готовых не выбрать. Стоит
+            // рядом с его голосом и репликами — здесь всё про того, кто
+            // сидит напротив.
+            //
+            // Кнопки «Сохранить» нет намеренно: за столом имя не правят, а
+            // лишняя кнопка после поля — ещё одна остановка для пальца на
+            // пути к «Репликам бота». Пишем на каждую букву.
+            //
+            // Склонять имя программа не станет: «у Меркурия» из «Меркурий»
+            // не вывести. Поэтому имя звучит там, где соперник действует
+            // («Меркурий берёт прикуп»), а падежные фразы говорят
+            // «соперник» (SETTINGS.md, 7).
+            Text("Имя соперника", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = settings.botName,
+                onValueChange = { name -> save(settings.copy(botName = name)) },
+                singleLine = true,
+                placeholder = { Text("Бот") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("Пусто — «Бот».", style = MaterialTheme.typography.bodyMedium)
+
+            Spacer(Modifier.height(8.dp))
+
+            SettingSwitch("Реплики соперника", settings.botTalk) { value ->
                 save(settings.copy(botTalk = value))
-                announce(if (value) "Реплики бота включены." else "Реплики бота выключены.")
+                announce(if (value) "Реплики соперника включены." else "Реплики соперника выключены.")
             }
 
             Spacer(Modifier.height(16.dp))

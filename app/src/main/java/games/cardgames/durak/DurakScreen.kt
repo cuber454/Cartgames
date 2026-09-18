@@ -40,6 +40,7 @@ import games.cardgames.score.Score
 import games.cardgames.score.saveScore
 import games.cardgames.settings.BOT_PITCH_DURAK
 import games.cardgames.settings.botPitch
+import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
 import games.cardgames.sound.TableSounds
@@ -103,6 +104,9 @@ fun DurakScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
+
+    // Как звать соперника. Пусто в настройках — «Бот», как было до имени.
+    val bot = botTitle(settings)
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -255,7 +259,7 @@ fun DurakScreen(
             }
         }
         voice.say(
-            finishPhrase(game, next),
+            finishPhrase(game, next, bot),
             afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
         )
     }
@@ -387,7 +391,7 @@ fun DurakScreen(
 
     fun allowedPhrase(): String {
         val moves = session.game.legalMoves(PLAYER)
-        if (moves.isEmpty()) return "Сейчас ход бота, подожди."
+        if (moves.isEmpty()) return "Сейчас ход соперника, подожди."
         val parts = mutableListOf<String>()
         moves.filterIsInstance<DurakMove.Attack>().forEach { parts += "положить ${it.card.spoken()}" }
         moves.filterIsInstance<DurakMove.Defend>().forEach { parts += "отбиться картой ${it.card.spoken()}" }
@@ -424,10 +428,10 @@ fun DurakScreen(
         // стол не отбит, атакующий формально игрок, но играть ему нечем:
         // ход защищающегося. По «attacker == PLAYER» строка врала ровно в
         // этот момент — обещала ход там, где игрок ничего сделать не мог.
-        append(if (moves.isNotEmpty()) "Твой ход." else "Ход бота.")
+        append(if (moves.isNotEmpty()) "Твой ход." else "Ход соперника.")
         append(" Козырь — ${game.trumpSuit.spoken}.")
         append(" В колоде ${game.deckSize()}.")
-        append(" У бота ${game.handOf(BOT).size}.")
+        append(" У соперника ${game.handOf(BOT).size}.")
     }
 
     // Порядок карт — ровно тот, что выбран в настройках, и ничего поверх:
@@ -684,7 +688,7 @@ private fun dealPhrase(game: DurakGame): String {
     // карты игрок слушает свайпом по руке, и вслух они превращаются в
     // длинную ленту, которую он всё равно не удержит; порядок он выбрал
     // сам в настройках. Стол при раздаче пуст — о нём молчим.
-    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Твой ход." else "Ход бота."
+    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Твой ход." else "Ход соперника."
     return "Раздача. Козырь — ${game.trumpSuit.spoken}. $turn"
 }
 
@@ -694,7 +698,7 @@ private fun dealPhrase(game: DurakGame): String {
  * а не «продолжаем», за которым ничего не стоит.
  */
 private fun resumePhrase(game: DurakGame): String {
-    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Ход твой." else "Ход бота."
+    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Ход твой." else "Ход соперника."
     // Стол пуст — о нём молчим: «на столе пусто» это не сведение, а шум.
     val table = if (game.table.isEmpty()) "" else " На столе: ${game.spokenTable()}."
     return "Продолжаем партию. Карт у тебя: ${game.handOf(PLAYER).size}, " +
@@ -711,15 +715,18 @@ private fun resumePhrase(game: DurakGame): String {
 private fun ownMovePhrase(move: DurakMove): String = when (move) {
     is DurakMove.Attack -> "Кладёшь ${move.card.spoken()}."
     is DurakMove.Defend -> "Отбиваешься картой ${move.card.spoken()}."
-    is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться боту."
+    // Не «отбиваться боту»: дательный падеж имени программа не выведет.
+    is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться сопернику."
     DurakMove.Take -> "Ты забираешь карты со стола."
     DurakMove.Pass -> "Ты сказал бито. Стол в отбой."
 }
 
-private fun finishPhrase(game: DurakGame, score: Score): String {
+private fun finishPhrase(game: DurakGame, score: Score, bot: String = "Бот"): String {
+    // Про соперника — в настоящем времени: «Меркурий вышел» верно только
+    // для мужского имени, а имя игрок выбирает любое (SETTINGS.md, 7).
     val result = when (game.winner) {
-        PLAYER -> "Ты вышел. Бот — дурак."
-        BOT -> "Бот вышел, у тебя остались карты. Ты дурак."
+        PLAYER -> "Ты вышел. $bot — дурак."
+        BOT -> "$bot выходит, у тебя остались карты. Ты дурак."
         else -> "Партия окончена, оба вышли. Ничья."
     }
     return "$result ${score.spoken()}"

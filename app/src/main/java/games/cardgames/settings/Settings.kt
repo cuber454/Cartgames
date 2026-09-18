@@ -65,6 +65,17 @@ const val BOT_PITCH_THOUSAND = 1.2f
 /** Голос бота: свой, а не выбрали — голос приложения. */
 fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
 
+/**
+ * Как звать соперника за столом. Пусто — «Бот», как было до имени.
+ *
+ * Имя звучит только там, где соперник — действующий: «Меркурий берёт
+ * прикуп». Где фраза требует падежа («у бота марьяж»), имя не подставить:
+ * склонять произвольное имя программа не умеет, а «у Меркурий» хуже, чем
+ * вовсе без имени. Такие фразы говорят «соперник» — см. SETTINGS.md, 7.
+ */
+fun botTitle(settings: Settings): String =
+    settings.botName.trim().ifEmpty { "Бот" }
+
 /** Высота голоса бота: своя только у бота без собственного голоса. */
 fun botPitch(own: String?, fallback: Float): Float = if (own == null) fallback else 1f
 
@@ -107,6 +118,14 @@ data class Settings(
     val botVoiceThousand: String? = null,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
+    /**
+     * Как звать соперника за столом. Пусто — «Бот».
+     *
+     * Имя одно на обе игры: за дураком и за тысячей сидит один и тот же
+     * соперник, просто говорит разными голосами. Развести их — дело
+     * будущего, если игроку это понадобится.
+     */
+    val botName: String = "",
     val sounds: Boolean = true,
     /**
      * Сигналы: короткие ноты о событиях — начало, твой ход, победа,
@@ -157,6 +176,7 @@ private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
+private const val KEY_BOT_NAME = "bot_name"
 private const val KEY_SOUNDS = "sounds"
 private const val KEY_SIGNALS = "signals"
 private const val KEY_VIBRATION = "vibration"
@@ -189,6 +209,7 @@ fun loadSettings(context: Context): Settings {
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
+        botName = prefs.getString(KEY_BOT_NAME, null).orEmpty(),
         sounds = prefs.getBoolean(KEY_SOUNDS, true),
         signals = prefs.getBoolean(KEY_SIGNALS, true),
         vibration = prefs.getBoolean(KEY_VIBRATION, true),
@@ -235,6 +256,7 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
+        .putString(KEY_BOT_NAME, settings.botName)
         .putBoolean(KEY_SOUNDS, settings.sounds)
         .putBoolean(KEY_SIGNALS, settings.signals)
         .putBoolean(KEY_VIBRATION, settings.vibration)
