@@ -1,6 +1,7 @@
 package games.cardgames.speech
 
 import android.view.View
+import games.cardgames.diag.Journal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -112,10 +113,24 @@ class TableVoice(
      * Свой ход. Скринридер уже прочитал карту, которую игрок нажал, — второй
      * раз называть её не надо, это и была та самая каша. Фразу всё равно
      * запоминаем: её повторит кнопка «Повтори».
+     *
+     * [aloud] — ход, о котором скринридер сам не расскажет: он прочитал
+     * карту, которой ходили, а не то, что с ней пришло. Прикуп — ровно такой
+     * случай: две новые карты игрок иначе ищет в руке сам и сравнивает на
+     * слух с тем, что помнит. Такую фразу отдаём тем же путём, что и событие
+     * за столом: говорит тот, чья сейчас очередь, — при работающем
+     * скринридере он, при выключенном приложение.
      */
-    fun sayOwnMove(text: String, afterMs: Long = 0L) {
+    fun sayOwnMove(text: String, afterMs: Long = 0L, aloud: Boolean = false) {
         note(text, afterMs)
-        if (!appVoice()) return
+        if (aloud) {
+            say(text, afterMs = afterMs)
+            return
+        }
+        if (!appVoice()) {
+            Journal.note("речь", "сказано только в «Повтори» (говорит скринридер): $text")
+            return
+        }
         if (afterMs <= 0) {
             speaker.say(text)
         } else {
@@ -124,21 +139,33 @@ class TableVoice(
     }
 
     /**
-     * Игрок нажал кнопку и ждёт ответа — отвечает приложение даже тогда,
-     * когда за столом говорит скринридер: игрок ждёт ответ, а не чтение
-     * кнопки. Скринридера перед фразой просим умолкнуть — это делает
-     * [Speaker.say].
+     * Игрок нажал кнопку и ждёт ответа. Говорит тот же, кто говорит и за
+     * столом: работает скринридер — он, выключен — приложение.
+     *
+     * Здесь так было не всегда: ответ на нажатие всегда уходил синтезатору
+     * приложения, и при включённом скринридере он перебивал его своим
+     * голосом — при том, что настройка обещала обратное. Кнопки — не
+     * исключение из правила «говорит ровно один», а его часть (Катерина,
+     * 18.09: «когда озвучка программы выключена, пусть и «Что можно», и
+     * «Повтори» читает скринридер»).
+     *
+     * В «Повтор» такой ответ не идёт: повторяют событие за столом, а не
+     * ответ на собственное нажатие. Иначе, спросив «Что можно» и нажав затем
+     * «Повтори», игрок слышит один и тот же ответ дважды — и обе кнопки
+     * выглядят как две одинаковые.
      */
     fun sayRequested(text: String) {
-        note(text)
-        speaker.say(text)
+        note(text, repeatable = false)
+        val aloud = appVoice()
+        if (aloud) Journal.note("речь", "игрок спросил — отвечает приложение: $text")
+        sayEvent(view, speaker, aloud, text)
     }
 
     /** Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]. */
     fun waitMs(): Long = (endsAt - System.currentTimeMillis()).coerceAtLeast(minWaitMs)
 
-    private fun note(text: String, afterMs: Long = 0L) {
-        remember(text)
+    private fun note(text: String, afterMs: Long = 0L, repeatable: Boolean = true) {
+        if (repeatable) remember(text)
         endsAt = System.currentTimeMillis() + afterMs + speechMs(text, rate())
     }
 }

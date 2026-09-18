@@ -31,10 +31,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.settings.BOT_PITCH_THOUSAND
+import games.cardgames.settings.GameSettingStore
 import games.cardgames.settings.botPitch
+import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
 import games.cardgames.sound.TableSounds
@@ -43,18 +47,25 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
+import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.cardVerdict
+import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
+import games.cardgames.ui.CardStack
 import games.cardgames.ui.TableCards
 import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
 import games.engine.Card as EngineCard
+import games.engine.Rank
 import games.engine.thousand.Phase
 import games.engine.thousand.RoundSummary
 import games.engine.thousand.ThousandBot
 import games.engine.thousand.ThousandMatch
 import games.engine.thousand.ThousandMove
 import games.engine.thousand.ThousandRound
+import games.engine.thousand.hasMarriage
+import games.engine.thousand.marriagePoints
 import games.engine.thousand.orderHand
 import kotlinx.coroutines.delay
 import kotlin.random.Random
@@ -94,6 +105,14 @@ fun ThousandScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
+
+    // Как звать соперника. Пусто в настройках — «Бот», как было до имени.
+    val bot = botTitle(settings)
+
+    // Помощник «хвалить автоматически» — из того же хранилища, что и
+    // договорённости, но в правила партии не входит: он про то, кто решает,
+    // а не про то, как считают.
+    val autoPraise = remember { GameSettingStore(context).value(AUTO_PRAISE) }
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -142,6 +161,10 @@ fun ThousandScreen(
     // Открыт ли вопрос о золотом коне: он стоит вдвое дороже обычного кона
     // и берётся на всю партию, поэтому спрашивается подтверждением.
     var goldenOpen by remember { mutableStateOf(false) }
+    // Карта с марьяжем, по которой нажали. У неё за столом два смысла сразу:
+    // ею ходят и ею же хвалят. Молча выбрать за игрока нельзя — сыгранная
+    // без похвалы, она марьяж теряет, и теряет без единого слова.
+    var cardPraise by remember { mutableStateOf<ThousandMove.Praise?>(null) }
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
@@ -212,7 +235,9 @@ fun ThousandScreen(
         val tricks = round.tricksPlayed()
         if (tricks.size <= tricksBefore) return ""
         val trick = tricks.last()
-        val who = if (trick.winner == PLAYER) "Взятка твоя" else "Взятку взял бот"
+        // Про соперника — без глагола: «взял» требует рода, а имя игрок
+        // выбирает любое.
+        val who = if (trick.winner == PLAYER) "Взятка твоя" else "Взятка у соперника"
         return " $who, очков ${trick.points}."
     }
 
@@ -245,7 +270,7 @@ fun ThousandScreen(
         if (session.match.winner != null) session.forgetSaved()
         val signalMs = finishSignal(summary)
         voice.say(
-            roundPhrase(round, summary, session.match),
+            roundPhrase(round, summary, session.match, bot),
             afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
         )
     }
@@ -259,7 +284,7 @@ fun ThousandScreen(
         // Раздача шумит почти семь десятых секунды: скажи мы сразу — голос
         // утонул бы в шорохе карт. Выключенные звуки — ждать нечего.
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
-        voice.say(dealPhrase(session.round), afterMs = afterMs)
+        voice.say(dealPhrase(session.round, bot), afterMs = afterMs)
     }
 
     fun nextRound() {
@@ -272,24 +297,47 @@ fun ThousandScreen(
         dealNew()
     }
 
-    /** Ход игрока: фраза, звук, толчок и передача хода — в одном месте. */
-    fun play(move: ThousandMove) {
+    /**
+     * Ход игрока: фраза, звук, толчок и передача хода — в одном месте.
+     *
+     * [note] — приписка к фразе о том, чего ход не сделал. Одной фразой, а не
+     * второй речью следом: [TableVoice.sayRequested] перебивает сказанное, и
+     * отдельная приписка съела бы сам ход.
+     *
+     * [aloud] — ход сделан не рукой игрока, а помощником. Такой ход сказать
+     * обязательно: скринридеру тут нечего читать, игрок ничего не нажимал, и
+     * без этой фразы с руки молча уходит карта.
+     */
+    fun play(move: ThousandMove, note: String = "", aloud: Boolean = false) {
         val round = session.round
         val tricksBefore = round.tricksPlayed().size
+        // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
+        // назвать его надо сейчас, иначе две новые карты придётся искать
+        // в руке самому и на слух сравнивать с тем, что помнишь.
+        val taken = move as? ThousandMove.TakePrikups
         val phrase = ownPhrase(
             move,
-            // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
-            // назвать его надо сейчас, иначе две новые карты придётся искать
-            // в руке самому и на слух сравнивать с тем, что помнишь.
-            prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
+            prikup = taken?.let { round.prikup(it.index) }.orEmpty(),
         )
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
         round.apply(PLAYER, move)
         val gap = soundGap(move)
+        val trick = trickSuffix(round, tricksBefore)
         voice.sayOwnMove(
-            phrase + trickSuffix(round, tricksBefore),
+            phrase + note + trick,
             afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
+            // Прикуп и взятка — то, о чём скринридер сам не расскажет: он
+            // прочитал карту, которой игрок ходил, а не то, что пришло в руку
+            // и не то, чья это взятка. Сказать это вполголоса, «для Повтора»,
+            // значит оставить игрока выяснять это самому — а взятку он у себя
+            // как раз и не слышит. Поэтому такие фразы звучат всегда.
+            //
+            // Приписка о марьяже — из того же ряда: она отвечает не на
+            // нажатие, а на то, чего ход не сделал, и молча потерять её
+            // значит потерять марьяж. Игрок узнал бы о нём только по счёту
+            // в конце кона (THOUSAND.md, 2.5).
+            aloud = aloud || taken != null || trick.isNotEmpty() || note.isNotEmpty(),
         )
         session.persist()
         finishIfOver()
@@ -298,7 +346,7 @@ fun ThousandScreen(
 
     fun allowedPhrase(): String {
         val moves = session.round.legalMoves(PLAYER)
-        if (moves.isEmpty()) return "Сейчас ход бота, подожди."
+        if (moves.isEmpty()) return "Сейчас ход соперника, подожди."
         // Снос — это «любая карта», а не список: перечислять двенадцать карт,
         // чтобы сказать «можно любую», значит читать руку второй раз.
         if (moves.all { it is ThousandMove.Discard }) {
@@ -317,8 +365,24 @@ fun ThousandScreen(
         return "Можно: " + parts.joinToString(", ") + "."
     }
 
-    /** Нажатие на карту: в сносе она уходит, в розыгрыше — играется. */
-    fun tapCard(card: EngineCard) {
+    /**
+     * Отчего карту с марьяжем нельзя похвалить прямо сейчас. Марьяж объявляют
+     * за столом, а не на пустой стол: пока не взято ни одной взятки, хвалить
+     * нечем. Сказать об этом надо в тот же момент — иначе о потерянном
+     * марьяже игрок узнаёт только по счёту в конце кона.
+     */
+    fun marriageNote(card: EngineCard): String {
+        if (card.rank != Rank.KING && card.rank != Rank.QUEEN) return ""
+        val round = session.round
+        if (!round.handOf(PLAYER).hasMarriage(card.suit)) return ""
+        // Хвалить уже можно — значит игрок сам выбрал сыграть без похвалы,
+        // а это его решение, а не потеря по незнанию.
+        if (round.tricksOf(PLAYER) > 0) return ""
+        return " Марьяж ${card.suit.spoken} похвалить нельзя: взяток ещё нет."
+    }
+
+    /** Сыграть карту, если это сейчас можно. */
+    fun playCard(card: EngineCard) {
         val moves = session.round.legalMoves(PLAYER)
         val move = moves.filterIsInstance<ThousandMove.Play>().firstOrNull { it.card == card }
             ?: moves.filterIsInstance<ThousandMove.Discard>().firstOrNull { card in it.cards }
@@ -329,7 +393,24 @@ fun ThousandScreen(
                 voice.sayRequested("Сейчас этой картой нельзя.")
                 return
             }
-        play(move)
+        play(move, note = if (move is ThousandMove.Play) marriageNote(card) else "")
+    }
+
+    /**
+     * Нажатие на карту: в сносе она уходит, в розыгрыше — играется, а если
+     * ею же можно похвалить марьяж, то сначала спрашиваем, что имелось в
+     * виду. Отвечать за игрока тут нельзя: сыгранный без похвалы король
+     * пару уже не соберёт, а марьяж стоит до ста очков.
+     */
+    fun tapCard(card: EngineCard) {
+        val praise = session.round.legalMoves(PLAYER)
+            .filterIsInstance<ThousandMove.Praise>()
+            .firstOrNull { it.card == card }
+        if (praise != null) {
+            cardPraise = praise
+            return
+        }
+        playCard(card)
     }
 
     // Ход бота: играем за него все ходы подряд, пока ход не вернётся к игроку.
@@ -343,7 +424,7 @@ fun ThousandScreen(
             // Ждём не «полсекунды», а пока договорит предыдущая фраза: иначе
             // бот перебивает сам себя и слышно только последнее слово.
             delay(voice.waitMs())
-            val move = ThousandBot.chooseMove(round, BOT, settings.difficulty, rng) ?: break
+            val move = ThousandBot.chooseMove(round, BOT, settings.botDifficultyThousand, rng) ?: break
             val tricksBefore = round.tricksPlayed().size
             soundFor(move)
             val phrase = botPhrase(
@@ -353,6 +434,7 @@ fun ThousandScreen(
                 // соперника не заглядывают. Берёт бот прикуп вслепую, как и
                 // игрок, но взятое называют вслух.
                 prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
+                bot = bot,
             )
             round.apply(BOT, move)
             // Звук хода и реплика бота стартуют в один момент и налезают
@@ -373,7 +455,42 @@ fun ThousandScreen(
         if (played && round.turn == PLAYER && round.phase != Phase.OVER) {
             if (settings.vibration) vibrations.tap()
             if (settings.signals) sounds.turn()
+            // И словами. Толчок слышно не всегда, а молчание после хода бота
+            // не отличить от «приложение задумалось»: игрок сидит и ждёт,
+            // пока заговорит бот, которого уже никто не ждёт. Сначала
+            // дослушиваем этого бота — своя фраза его перебивать не должна.
+            delay(voice.waitMs())
+            voice.say(TURN_PHRASE)
         }
+
+        // Хвалить автоматически: договорённость включена — объявляем марьяж
+        // сами, как только он стал возможен, и не переспрашиваем.
+        //
+        // Ход при этом делает та самая карта пары, которой марьяж и
+        // объявляют: другого способа объявить его в «Тысяче» нет, объявление
+        // и есть ход этой картой. Поэтому помощник и живёт в настройках, а не
+        // зашит: он распоряжается сильнейшим и необратимым решением партии —
+        // масть марьяжа становится козырем до конца кона (THOUSAND.md, 7.2).
+        if (autoPraise && round.turn == PLAYER && round.phase != Phase.OVER) {
+            val praise = round.legalMoves(PLAYER)
+                .filterIsInstance<ThousandMove.Praise>()
+                .firstOrNull()
+            if (praise != null) {
+                // Дослушиваем бота: он только что сходил, и его фразу перебивать
+                // незачем — своя всё равно пойдёт после паузы.
+                delay(voice.waitMs())
+                // Пока помощник дослушивал, игрок мог опередить его: нажатая
+                // карта уходит на стол его ходом, и объявлять марьяж после
+                // этого нечем. Тогда помощник молчит — решение уже принято, и
+                // второй ход поверх него был бы ходом за игрока.
+                val stillMine = cardPraise == null && praise in round.legalMoves(PLAYER)
+                // Вслух обязательно: ход сделал помощник, а не игрок. Скринридеру
+                // тут читать нечего — карту никто не нажимал, — и «для Повтора»
+                // значит, что с руки молча ушла карта и объявился козырь.
+                if (stillMine) play(praise, aloud = true)
+            }
+        }
+
         finishIfOver()
         if (played) session.tick++
     }
@@ -386,11 +503,11 @@ fun ThousandScreen(
             session.restored -> {
                 session.acceptRestored()
                 if (session.round.phase != Phase.OVER) {
-                    voice.say(resumePhrase(session.round, session.match), whenReady = true)
+                    voice.say(resumePhrase(session.round, session.match, bot), whenReady = true)
                 }
             }
 
-            session.lastPhrase.isBlank() -> voice.say(dealPhrase(session.round), whenReady = true)
+            session.lastPhrase.isBlank() -> voice.say(dealPhrase(session.round, bot), whenReady = true)
 
             // Вернулись с другого экрана — напоминаем, на чём остановились.
             // lastPhrase не трогаем: «Продолжаем» — это не фраза для
@@ -423,17 +540,19 @@ fun ThousandScreen(
                         if (round.currentBid == 0) "Торг. Ставок нет." else "Торг. Ставка ${round.currentBid}."
 
                     Phase.PRIKUP ->
-                        if (round.declarer == PLAYER) "Прикуп твой." else "Бот берёт прикуп."
+                        if (round.declarer == PLAYER) "Прикуп твой." else "$bot берёт прикуп."
 
                     Phase.DISCARD ->
-                        if (round.declarer == PLAYER) "Снос." else "Бот сносит карту."
+                        if (round.declarer == PLAYER) "Снос." else "$bot сносит карту."
 
                     Phase.PLAY -> "Розыгрыш."
 
                     Phase.OVER -> ""
                 },
             )
-            append(if (yourTurn) " Твой ход." else " Ход бота.")
+            // «Ход соперника», а не по имени: «ход Меркурия» — падеж, а
+            // склонять произвольное имя программа не умеет (SETTINGS.md, 7).
+            append(if (yourTurn) " Твой ход." else " Ход соперника.")
         }
     }
 
@@ -447,7 +566,7 @@ fun ThousandScreen(
         // объявления его попросту нет, и молчать об этом честнее, чем
         // называть козырем что-то одно.
         round.trumpSuit?.let { append(" Козырь — ${it.spoken}.") }
-        append(" Счёт: ты ${match.scores[PLAYER]}, бот ${match.scores[BOT]}.")
+        append(" Счёт: ты ${match.scores[PLAYER]}, $bot ${match.scores[BOT]}.")
         // Сложить руку в уме до ста двадцати — работа, которой за столом
         // никто не делает: зрячий видит это с одного взгляда, а на слух надо
         // пересчитать всю руку. Поэтому говорим прямо, когда объявить можно.
@@ -455,9 +574,9 @@ fun ThousandScreen(
             append(" Рука держит заказ — можно объявить золотой кон.")
         }
         if (match.barrelSeat == PLAYER) append(" Ты на бочке.")
-        if (match.barrelSeat == BOT) append(" Бот на бочке.")
+        if (match.barrelSeat == BOT) append(" $bot на бочке.")
         if (round.phase == Phase.PLAY) {
-            append(" Взяток: у тебя ${round.tricksOf(PLAYER)}, у бота ${round.tricksOf(BOT)}.")
+            append(" Взяток: у тебя ${round.tricksOf(PLAYER)}, у соперника ${round.tricksOf(BOT)}.")
             append(" Очков: ${round.roundPoints(PLAYER)} и ${round.roundPoints(BOT)}.")
             // Четыре туза на руке зрячий видит сразу, а на слух их надо
             // пересчитать по всей руке — и то лишь пока ни один не сыгран.
@@ -481,10 +600,13 @@ fun ThousandScreen(
     // Порядок карт — тот, что выбран в настройках; старшинство тут своё
     // (десятка выше короля), поэтому и сортировка своя, из движка.
     val hand = orderHand(round.handOf(PLAYER), settings.order, round.trumpSuit)
+    // Карты, которыми ход и вправду можно сделать. Сноса тут нет намеренно:
+    // снести можно любую карту, и «подходит» на сносе — ответ не на тот
+    // вопрос. Вердикт отвечает на «чем мне ходить», а не на «что отдать».
     val playable: Set<EngineCard> = moves.mapNotNull { move ->
         when (move) {
             is ThousandMove.Play -> move.card
-            is ThousandMove.Discard -> move.cards.firstOrNull()
+            is ThousandMove.Praise -> move.card
             else -> null
         }
     }.toSet()
@@ -498,10 +620,16 @@ fun ThousandScreen(
      * Шаг по руке вправо-влево. С какого места ни начни — карта называется
      * целиком: тем, кто слушает, номер без названия не говорит ничего, а
      * «подходит или нет» — это и есть ответ на вопрос «чем мне ходить».
+     *
+     * Говорит тот, кто читает экран вообще: работает скринридер — он, выключен
+     * — приложение. Через [TableVoice.say], а не [TableVoice.sayRequested]:
+     * свайп по руке — это чтение экрана, и голос приложения на нём перебивал
+     * скринридер, из-за чего игрок слышал чужую речь вместо своей и терял
+     * место, на котором остановился.
      */
     fun walkHand(step: Int) {
         if (hand.isEmpty()) {
-            voice.sayRequested("Карт на руке нет.")
+            voice.say("Карт на руке нет.")
             return
         }
         val next = if (cursor < 0) {
@@ -511,8 +639,7 @@ fun ThousandScreen(
         }
         cursor = next
         val card = hand[next]
-        val fits = if (card in playable) "подходит" else "не подходит"
-        voice.sayRequested("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
+        voice.say("${next + 1} из ${hand.size}: ${card.spoken()}${cardVerdict(card, playable)}.")
     }
 
     Column(
@@ -567,7 +694,7 @@ fun ThousandScreen(
                 itemsIndexed(hand) { index, card ->
                     HandCard(
                         card = card,
-                        playable = card in playable,
+                        playable = verdictOf(card, playable),
                         cardWidth = cardWidth,
                         cardHeight = cardHeight,
                         largeText = settings.largeText,
@@ -621,13 +748,31 @@ fun ThousandScreen(
             }
 
             prikups.isNotEmpty() -> {
-                prikups.forEach { take ->
-                    Button(
-                        onClick = { play(take) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Взять прикуп ${take.index + 1}") }
-                    Spacer(Modifier.height(8.dp))
+                // Прикупы стоят в ряд, а не один под другим, и каждый
+                // нарисован стопкой рубашкой вниз: их выбирают между собой,
+                // и «левый или правый» — это и есть выбор. Столбиком кнопки
+                // читались как два шага подряд, а не как два равных
+                // предложения (Катерина, 18.09).
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    prikups.forEach { take ->
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CardStack(
+                                count = round.prikup(take.index).size,
+                                cardWidth = tableWidth,
+                                cardHeight = tableHeight,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Button(
+                                onClick = { play(take) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Взять прикуп ${take.index + 1}") }
+                        }
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
             }
 
             // Марьяж объявляют картой, которой и ходят, поэтому кнопка одна,
@@ -636,7 +781,10 @@ fun ThousandScreen(
                 Button(
                     onClick = {
                         val only = praises.singleOrNull()
-                        if (only != null) play(only) else praiseOpen = true
+                        // Единственный марьяж — сразу, без диалога; вслух по
+                        // той же причине, что и в диалогах ниже: кнопка не
+                        // говорит, что ушло на стол и какой козырь объявлен.
+                        if (only != null) play(only, aloud = true) else praiseOpen = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Хвалить марьяж") }
@@ -695,7 +843,7 @@ fun ThousandScreen(
                     text = {
                         Text(
                             "Заказ ${round.currentBid} не играется: ты пишешь минус " +
-                                "${round.currentBid}, бот плюс $share. Карты не доигрываются.",
+                                "${round.currentBid}, $bot плюс $share. Карты не доигрываются.",
                         )
                     },
                     confirmButton = {
@@ -717,14 +865,32 @@ fun ThousandScreen(
             // Обе кнопки — вопрос игрока, а не событие за столом: он нажал
             // и ждёт ответа. Отвечаем своим голосом и в том случае, когда
             // за столом говорит скринридер.
+            //
+            // Имя кнопки живёт внутри неё, а не рядом с ней.
+            //
+            // Так его собирает сам Compose: имя, положенное на кнопку снаружи,
+            // до неё не доходит, и скринридер читает «без метки» — проверено
+            // на телефоне. Внутри — доходит и склеивается с кнопкой; ровно так
+            // подписаны кнопки-иконки во всём Compose. Надпись для глаза при
+            // этом закрыта от скринридера, иначе он прочитает её дважды.
             Button(
                 onClick = { voice.sayRequested(allowedPhrase()) },
                 modifier = Modifier.weight(1f),
-            ) { Text("Что можно") }
+            ) {
+                Text(
+                    "Что можно",
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = "Что можно" },
+                )
+            }
             Button(
                 onClick = { voice.sayRequested(session.lastPhrase) },
                 modifier = Modifier.weight(1f),
-            ) { Text("Повтори") }
+            ) {
+                Text(
+                    "Повтори",
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = "Повтори" },
+                )
+            }
         }
     }
 
@@ -740,7 +906,10 @@ fun ThousandScreen(
                         TextButton(
                             onClick = {
                                 praiseOpen = false
-                                play(praise)
+                                // Вслух — как и в диалоге карты: нажатие
+                                // скринридер прочитает сам, а чем обошлось —
+                                // нет (см. play, aloud).
+                                play(praise, aloud = true)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Хвалить: ${praise.card.suit.spoken}") }
@@ -749,6 +918,42 @@ fun ThousandScreen(
             },
             confirmButton = {
                 TextButton(onClick = { praiseOpen = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    // Карта, которая годится и на ход, и на похвалу. Один диалог на одну
+    // карту: объявляют марьяж той же картой, которой ходят, и выбрать за
+    // игрока — значит решить, нужен ли ему марьяж, не спросив его.
+    cardPraise?.let { praise ->
+        val suit = praise.card.suit
+        AlertDialog(
+            onDismissRequest = { cardPraise = null },
+            title = { Text("Хвалить марьяж?") },
+            text = {
+                Text(
+                    "${praise.card.spoken()}: похвалить — это ${marriagePoints(suit)} очков " +
+                        "и козырь ${suit.spoken}. Или сыграть ею без похвалы.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        cardPraise = null
+                        // Вслух: нажатие скринридер прочитает сам («Хвалить»),
+                        // а вот чем это обошлось — что ушло на стол и какой
+                        // масти теперь козырь — не скажет никто, кроме нас.
+                        play(praise, aloud = true)
+                    },
+                ) { Text("Хвалить") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        cardPraise = null
+                        playCard(praise.card)
+                    },
+                ) { Text("Сыграть без похвалы") }
             },
         )
     }
@@ -788,18 +993,30 @@ fun ThousandScreen(
  * Прикуп — исключение из краткости: [prikup] называет карты, которые бот
  * забрал. Взятый прикуп показывают обоим, а в открытую руку соперника не
  * заглядывают: не назовём сейчас — игрок не узнает этого никогда.
+ *
+ * [bot] — имя соперника. Все здешние фразы — в настоящем времени, и это не
+ * стиль, а условие: прошедшее время требует рода («Меркурий снёс», но «Соня
+ * снесла»), а род произвольного имени программа не знает. Настоящее время
+ * рода не требует — и имя встаёт на место без ошибки при любом выборе.
  */
-private fun botPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()): String = when (move) {
-    is ThousandMove.Bid -> "Бот называет ${move.amount}."
-    ThousandMove.Pass -> "Бот пасует."
+private fun botPhrase(
+    move: ThousandMove,
+    prikup: List<EngineCard> = emptyList(),
+    bot: String = "Бот",
+): String = when (move) {
+    is ThousandMove.Bid -> "$bot называет ${move.amount}."
+    ThousandMove.Pass -> "$bot пасует."
     is ThousandMove.TakePrikups ->
-        if (prikup.isEmpty()) "Бот берёт прикуп."
-        else "Бот берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
-    is ThousandMove.Discard -> "Бот снёс карту."
-    is ThousandMove.Praise -> "Бот хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
-    ThousandMove.Golden -> "Бот объявляет золотой кон: заказ 120, очки двойные."
-    ThousandMove.Raspis -> "Бот расписывается."
-    is ThousandMove.Play -> "Бот кладёт ${move.card.spoken()}."
+        if (prikup.isEmpty()) "$bot берёт прикуп."
+        else "$bot берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
+    // Снос уходит рубашкой вверх, и в чужой руке эту карту потом не увидеть:
+    // не назовём сейчас — игрок найдёт её только перебором руки. Играем
+    // вдвоём, поэтому весь снос достаётся игроку.
+    is ThousandMove.Discard -> "$bot сносит карту: тебе ${move.cards.joinToString(", ") { it.spoken() }}."
+    is ThousandMove.Praise -> "$bot хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    ThousandMove.Golden -> "$bot объявляет золотой кон: заказ 120, очки двойные."
+    ThousandMove.Raspis -> "$bot расписывается."
+    is ThousandMove.Play -> "$bot кладёт ${move.card.spoken()}."
 }
 
 /** Свой ход — вслух. Не «сыграна карта», а живая речь, короткая. */
@@ -810,14 +1027,18 @@ private fun ownPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
         if (prikup.isEmpty()) "Берёшь прикуп ${move.index + 1}."
         else "Берёшь прикуп ${move.index + 1}: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
-    is ThousandMove.Praise -> "Хвалишь ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    // Карта названа намеренно: хвалить можно и королём, и дамой, а на стол
+    // уходит ровно одна из них — без имени игрок ищет пропажу перебором руки.
+    is ThousandMove.Praise ->
+        "Хвалишь ${move.card.suit.spoken}: на стол уходит ${move.card.spoken()}. " +
+            "Козырь — ${move.card.suit.spoken}."
     ThousandMove.Golden -> "Объявляешь золотой кон: заказ 120, прикуп не берёшь, очки двойные."
     ThousandMove.Raspis -> "Расписываешься."
     is ThousandMove.Play -> "Кладёшь ${move.card.spoken()}."
 }
 
-private fun dealPhrase(round: ThousandRound): String {
-    val first = if (round.turn == PLAYER) "Первое слово твоё." else "Первым называет бот."
+private fun dealPhrase(round: ThousandRound, bot: String = "Бот"): String {
+    val first = if (round.turn == PLAYER) "Первое слово твоё." else "Первым называет $bot."
     return "Раздача. Торг: первое слово — сто, дальше по пять. $first"
 }
 
@@ -826,7 +1047,11 @@ private fun dealPhrase(round: ThousandRound): String {
  * после случайного выхода и не помнит стол — напоминаем положение дел,
  * а не «продолжаем», за которым ничего не стоит.
  */
-private fun resumePhrase(round: ThousandRound, match: ThousandMatch): String {
+private fun resumePhrase(
+    round: ThousandRound,
+    match: ThousandMatch,
+    bot: String = "Бот",
+): String {
     val body = when (round.phase) {
         Phase.BIDDING ->
             if (round.currentBid == 0) "Торг, ставок нет." else "Торг, ставка ${round.currentBid}."
@@ -851,9 +1076,9 @@ private fun resumePhrase(round: ThousandRound, match: ThousandMatch): String {
     } else {
         ""
     }
-    val turn = if (round.turn == PLAYER) " Твой ход." else " Ход бота."
+    val turn = if (round.turn == PLAYER) " Твой ход." else " Ход соперника."
     return "Продолжаем партию. $body$golden$trump$aces " +
-        "Счёт: у тебя ${match.scores[PLAYER]}, у бота ${match.scores[BOT]}.$turn"
+        "Счёт: ты ${match.scores[PLAYER]}, $bot ${match.scores[BOT]}.$turn"
 }
 
 /**
@@ -864,6 +1089,7 @@ private fun roundPhrase(
     round: ThousandRound,
     summary: RoundSummary,
     match: ThousandMatch,
+    bot: String = "Бот",
 ): String {
     val parts = mutableListOf<String>()
     val declarer = round.declarer
@@ -871,7 +1097,11 @@ private fun roundPhrase(
     if (scribbler != null) {
         // Тут не «набрал столько-то»: при росписи карты не доиграны, и
         // очки кона ни о чём не говорят. Говорим то, что случилось.
-        val who = if (scribbler == PLAYER) "Ты расписался" else "Бот расписался"
+        //
+        // Про соперника — в настоящем времени: «Меркурий расписался» верно
+        // только для мужского имени, а имя игрок выбирает любое. Род
+        // прошедшего времени программа угадывать не станет (см. [botPhrase]).
+        val who = if (scribbler == PLAYER) "Ты расписался" else "$bot расписывается"
         parts += "Кон окончен. $who: заказ ${round.currentBid} не играется."
     } else if (declarer != null) {
         // Очки берём у матча, а не у кона: договорённости сторон добавляют
@@ -879,9 +1109,9 @@ private fun roundPhrase(
         // сказали бы «заказ не выполнен» там, где матч только что записал
         // выполнение, — а это худшая из возможных ошибок за столом.
         val points = summary.points.getOrElse(declarer) { round.roundPoints(declarer) }
-        val who = if (declarer == PLAYER) "ты" else "бот"
+        val who = if (declarer == PLAYER) "ты набрал" else "$bot набирает"
         val done = if (points >= round.currentBid) "Заказ выполнен." else "Заказ не выполнен."
-        parts += "Кон окончен. Заказ ${round.currentBid}, $who набрал $points. $done"
+        parts += "Кон окончен. Заказ ${round.currentBid}, $who $points. $done"
     } else {
         parts += "Кон окончен."
     }
@@ -895,37 +1125,37 @@ private fun roundPhrase(
         parts += if (it == PLAYER) {
             "Тузовый марьяж: четыре туза и взятка — плюс 200."
         } else {
-            "У бота тузовый марьяж: плюс 200."
+            "Тузовый марьяж у соперника: плюс 200."
         }
     }
 
     val writes = summary.deltas.mapIndexed { seat, delta ->
-        val who = if (seat == PLAYER) "ты" else "бот"
+        val who = if (seat == PLAYER) "ты" else bot
         "$who ${writeWords(delta)}"
     }
     parts += "Записано: ${writes.joinToString(", ")}."
 
-    summary.bolted.forEach { parts += if (it == PLAYER) "Болт тебе." else "Болт боту." }
+    summary.bolted.forEach { parts += if (it == PLAYER) "Болт тебе." else "Болт сопернику." }
     summary.raspisPenalised?.let {
-        parts += if (it == PLAYER) "Третья роспись — штраф 120." else "У бота третья роспись — штраф 120."
+        parts += if (it == PLAYER) "Третья роспись — штраф 120." else "Третья роспись у соперника — штраф 120."
     }
     summary.samosvaled.forEach {
         parts += if (it == PLAYER) {
             "Самосвал: 555, и счёт сгорел — начинаешь с нуля."
         } else {
-            "У бота самосвал: его счёт сгорел."
+            "Самосвал у соперника: его счёт сгорел."
         }
     }
     summary.barrelSat?.let {
-        parts += if (it == PLAYER) "Ты садишься на бочку." else "Бот садится на бочку."
+        parts += if (it == PLAYER) "Ты садишься на бочку." else "$bot садится на бочку."
     }
     summary.barrelsDropped.forEach {
-        parts += if (it == PLAYER) "Ты слетел с бочки." else "Бот слетел с бочки."
+        parts += if (it == PLAYER) "Ты слетел с бочки." else "$bot слетает с бочки."
     }
 
-    parts += "Счёт: у тебя ${match.scores[PLAYER]}, у бота ${match.scores[BOT]}."
+    parts += "Счёт: ты ${match.scores[PLAYER]}, $bot ${match.scores[BOT]}."
     summary.winner?.let {
-        parts += if (it == PLAYER) "Ты выиграл партию!" else "Бот выиграл партию."
+        parts += if (it == PLAYER) "Ты выиграл партию!" else "$bot выигрывает партию."
     }
     return parts.joinToString(" ")
 }

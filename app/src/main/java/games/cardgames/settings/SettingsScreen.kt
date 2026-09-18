@@ -16,6 +16,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -35,13 +36,20 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_DURAK
+import games.cardgames.GAME_THOUSAND
+import games.cardgames.diag.Journal
+import games.cardgames.diag.JournalShare
+import games.cardgames.durak.DURAK_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
 import games.cardgames.score.Score
+import games.cardgames.thousand.AUTO_PRAISE
 import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.engine.durak.Difficulty
 
 /** Образец речи: по нему игрок и выбирает голос — на слух, а не по названию. */
 private const val SAMPLE = "Так будет звучать игра. Козырь — пики, у тебя семёрка червей."
@@ -49,8 +57,8 @@ private const val SAMPLE = "Так будет звучать игра. Козы�
 /** Чей голос выбирают. Своя строка у каждого, кто за столом говорит. */
 private enum class VoiceSlot(val title: String, val inherit: String) {
     APP("Голос приложения", "системный"),
-    DURAK("Голос бота в дураке", "как у приложения"),
-    THOUSAND("Голос бота в тысяче", "как у приложения"),
+    DURAK("Голос соперника в дураке", "как у приложения"),
+    THOUSAND("Голос соперника в тысяче", "как у приложения"),
 }
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
@@ -75,6 +83,13 @@ private fun sampleFor(index: Int, total: Int, hint: String?): String = buildStri
 /**
  * Настройки: всё, что можно включить, выключить или выбрать.
  *
+ * Экран один на всё приложение, а игр две, поэтому первым делом он знает,
+ * чьи настройки показывает: [game] — игра, из-за стола которой пришли.
+ * Её правила и её соперник стоят наверху, а ниже идёт общее — то, что
+ * одинаково за любым столом. Пришли из главного меню ([game] равен null) —
+ * на экране только общее: правила игры показывают за её столом, в общем
+ * списке они только путали (SETTINGS.md, 2).
+ *
  * Голоса выбираются на слух: название голоса в системе —
  * «ru-ru-x-ruf-network», человеку оно ничего не говорит. Поэтому выбор
  * открывает список целиком, а каждый выбор сразу звучит образцом.
@@ -83,11 +98,23 @@ private fun sampleFor(index: Int, total: Int, hint: String?): String = buildStri
  * много, а найти среди них нужный перебором нельзя.
  */
 @Composable
-fun SettingsScreen(onExit: () -> Unit) {
+fun SettingsScreen(game: String?, onExit: () -> Unit) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
     var resetAsked by remember { mutableStateOf(false) }
+    var clearAsked by remember { mutableStateOf(false) }
+
+    // Что открыто: настройки своей игры или общие для всей программы.
+    // Из главного меню общие — единственное, что есть, и переключателя там
+    // не нужно. Из-за стола их двое, и по умолчанию открыта игра: за ней и
+    // лезут в настройки посреди партии.
+    var part by remember { mutableStateOf(if (game == null) SettingsPart.COMMON else SettingsPart.GAME) }
+
+    // Размер журнала читаем при входе: по нему видно, есть ли что отправлять,
+    // не открывая файл. За время на экране он растёт — но это уже неважно,
+    // важно, что было до.
+    var journalSize by remember { mutableStateOf(Journal.sizeTitle(context)) }
 
     // Черновик скорости: пока палец на ползунке, настройку не трогаем —
     // иначе Speaker пересобирался бы на каждый пиксель движения.
@@ -248,206 +275,329 @@ fun SettingsScreen(onExit: () -> Unit) {
         Text("Настройки", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
 
-        // --- Речь ---------------------------------------------------------
+        // --- Какие настройки -----------------------------------------------
 
-        Text("Речь", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-
-        // Скорость: ползунок и две кнопки. Ползунок хорош на глаз, но
-        // незрячему он неудобен — пальцем в него не попасть, а «сорок
-        // процентов» ему ничего не говорят. Поэтому точную подстройку
-        // ведут кнопками, а ползунок показывает, где мы находимся.
-        // Число рядом со словом — для зрячих помощников: незрячему оно
-        // ничего не добавляет, а зрячему сразу видно, куда сдвинулся ползунок.
-        Text(
-            "Скорость речи: ${rateTitle(rateDraft)} (${"%.1f".format(rateDraft)})",
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Slider(
-            value = rateDraft,
-            onValueChange = { rateDraft = it },
-            onValueChangeFinished = { applyRate(rateDraft) },
-            valueRange = RATE_MIN..RATE_MAX,
-            steps = RATE_STEPS,
-            modifier = Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = "Скорость речи" },
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { applyRate(rateDraft - RATE_STEP) },
-                enabled = rateDraft > RATE_MIN + 1e-4f,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Медленнее")
-            }
-            OutlinedButton(
-                onClick = { applyRate(rateDraft + RATE_STEP) },
-                enabled = rateDraft < RATE_MAX - 1e-4f,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Быстрее")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        SettingButton("Синтезатор: $engineLabel ($enginePosition из $engineTotal)") {
-            if (engines.isEmpty()) {
-                announce("Список синтезаторов ещё не готов, нажми ещё раз.")
+        // Общие не прячутся за прокруткой. За столом их так и не находили:
+        // список начинается с игры, до общих нужно листать вслепую — а
+        // сколько там ещё, не слышно (Катерина, 18.09: «я их когда играю в
+        // тысячу не вижу, их нету»). Кнопка называет то, что откроется, и
+        // стоит первой, до всякой прокрутки.
+        if (game != null) {
+            if (part == SettingsPart.GAME) {
+                SettingButton("Общие настройки: речь, звук, порядок карт, журнал") {
+                    part = SettingsPart.COMMON
+                    announce("Общие настройки для всей программы.")
+                }
             } else {
-                // Первый в списке — системный, дальше установленные в телефоне.
-                val currentIndex = if (activeEngine == null) 0 else engines.indexOf(activeEngine) + 1
-                val nextIndex = (currentIndex + 1) % (engines.size + 1)
-                val nextName = if (nextIndex == 0) null else engines[nextIndex - 1].name
-                val nextLabel = if (nextIndex == 0) "системный" else engines[nextIndex - 1].label
-                // Голос у нового синтезатора свой, прежний ему не принадлежит:
-                // поэтому выбор голоса начинается заново, с его умолчания.
-                save(settings.copy(engine = nextName, voice = null))
-                auditionVoice(null, 1f, "Синтезатор: $nextLabel. $SAMPLE")
+                SettingButton("Настройки игры: ${gameTitle(game)}") {
+                    part = SettingsPart.GAME
+                    announce("Настройки игры ${gameTitle(game)}.")
+                }
             }
+            Spacer(Modifier.height(16.dp))
         }
 
-        // Голос у каждого из троих свой: за столом говорят приложение и два
-        // бота, и на слух их надо различать — «бот сказал» и «приложение
-        // сказало» это разные вещи, спутать их значит не понять, чей ход.
-        SettingButton(voiceRowTitle(VoiceSlot.APP, settings.voice, voices)) {
-            if (voices.isEmpty()) {
-                announce("Синтезатор ещё не готов, попробуй ещё раз.")
-            } else {
-                picking = VoiceSlot.APP
+        // --- Эта игра ------------------------------------------------------
+
+        // Первым — то, ради чего за столом и лезут в настройки: с кем играть
+        // и по каким правилам. Строки правил приходят от самой игры, а не
+        // написаны здесь: экран один на всё приложение, и третья игра принесёт
+        // сюда свой список, а не ещё один экран (SETTINGS.md, 2).
+        if (game != null && part == SettingsPart.GAME) {
+            Text(gameTitle(game), style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            SettingButton("Соперник: ${botDifficulty(game, settings).title}") {
+                val next = botDifficulty(game, settings).next()
+                save(
+                    if (game == GAME_THOUSAND) {
+                        settings.copy(botDifficultyThousand = next)
+                    } else {
+                        settings.copy(botDifficultyDurak = next)
+                    },
+                )
+                announce("Соперник: ${next.title}.")
             }
-        }
 
-        SettingButton(voiceRowTitle(VoiceSlot.DURAK, settings.botVoiceDurak, voices)) {
-            if (voices.isEmpty()) {
-                announce("Синтезатор ещё не готов, попробуй ещё раз.")
-            } else {
-                picking = VoiceSlot.DURAK
-            }
-        }
+            Spacer(Modifier.height(8.dp))
 
-        SettingButton(voiceRowTitle(VoiceSlot.THOUSAND, settings.botVoiceThousand, voices)) {
-            if (voices.isEmpty()) {
-                announce("Синтезатор ещё не готов, попробуй ещё раз.")
-            } else {
-                picking = VoiceSlot.THOUSAND
-            }
-        }
-
-        SettingButton("Кто говорит: ${settings.voiceMode.title}") {
-            val next = settings.voiceMode.next()
-            save(settings.copy(voiceMode = next))
-            announce(whoSpeaksPhrase(next))
-        }
-
-        SettingSwitch("Реплики бота", settings.botTalk) { value ->
-            save(settings.copy(botTalk = value))
-            announce(if (value) "Реплики бота включены." else "Реплики бота выключены.")
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // --- Звук и вибрация ----------------------------------------------
-
-        Text("Звук и вибрация", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-
-        SettingSwitch("Звуки стола", settings.sounds) { value ->
-            save(settings.copy(sounds = value))
-            announce(if (value) "Звуки стола включены." else "Звуки стола выключены.")
-        }
-
-        SettingSwitch("Сигналы", settings.signals) { value ->
-            save(settings.copy(signals = value))
-            announce(if (value) "Сигналы включены." else "Сигналы выключены.")
-        }
-
-        SettingSwitch("Вибрация на ход соперника", settings.vibration) { value ->
-            save(settings.copy(vibration = value))
-            announce(if (value) "Вибрация на ход соперника включена." else "Вибрация на ход соперника выключена.")
-        }
-
-        SettingSwitch("Вибрация на мои ходы", settings.ownVibration) { value ->
-            save(settings.copy(ownVibration = value))
-            announce(if (value) "Вибрация на мои ходы включена." else "Вибрация на мои ходы выключена.")
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // --- Игра ----------------------------------------------------------
-
-        Text("Игра", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-
-        SettingButton("Соперник: ${settings.difficulty.title}") {
-            val next = settings.difficulty.next()
-            save(settings.copy(difficulty = next))
-            announce("Соперник: ${next.title}.")
-        }
-
-        SettingButton("Порядок карт: ${settings.order.title}") {
-            val next = settings.order.next()
-            save(settings.copy(order = next))
-            announce("Порядок карт: ${next.title}.")
-        }
-
-        SettingSwitch("Перевод карты — переводной дурак", settings.transfer) { value ->
-            save(settings.copy(transfer = value))
-            announce(
-                if (value) {
-                    "Перевод включён: защищающийся может перевести карту соседу. " +
-                        "Действует со следующей раздачи."
-                } else {
-                    "Перевод выключен: подкидной дурак, защищающийся только отбивается или берёт. " +
-                        "Действует со следующей раздачи."
-                },
+            Text(
+                if (game == GAME_THOUSAND) "Договорённости сторон" else "Правила стола",
+                style = MaterialTheme.typography.titleMedium,
             )
+            Spacer(Modifier.height(8.dp))
+
+            val gameSettings = remember { GameSettingStore(context) }
+            val rules = if (game == GAME_THOUSAND) THOUSAND_SETTINGS else DURAK_SETTINGS
+            rules.forEach { setting ->
+                GameSettingRow(setting, gameSettings) { announce(it) }
+            }
+
+            // Помощник стоит отдельно от договорённостей: там то, о чём
+            // сговариваются до стола, а тут — чего игрок хочет от приложения.
+            // Свалить их в один список значило бы сказать, что это одно и то же.
+            if (game == GAME_THOUSAND) {
+                Spacer(Modifier.height(8.dp))
+                Text("Помощь за столом", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                GameSettingRow(AUTO_PRAISE, gameSettings) { announce(it) }
+            }
+
+            Spacer(Modifier.height(16.dp))
         }
 
-        SettingSwitch("Крупные карты и шрифт", settings.largeText) { value ->
-            save(settings.copy(largeText = value))
-            announce(if (value) "Крупный размер включён." else "Крупный размер выключен.")
-        }
+        // --- Общие для всей программы --------------------------------------
+        // Своя половина настроек: из-за стола сюда переходят кнопкой наверху,
+        // а из главного меню эти настройки — единственные, и половина одна.
+        if (game == null || part == SettingsPart.COMMON) {
+            // --- Речь ---------------------------------------------------------
 
-        SettingSwitch("Автосохранение партии", settings.autosave) { value ->
-            save(settings.copy(autosave = value))
-            announce(
-                if (value) {
-                    "Автосохранение включено. Незаконченную партию можно будет продолжить."
-                } else {
-                    "Автосохранение выключено. Выйдешь посреди партии — начнёшь заново."
-                },
+            Text("Речь", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            // Скорость: ползунок и две кнопки. Ползунок хорош на глаз, но
+            // незрячему он неудобен — пальцем в него не попасть, а «сорок
+            // процентов» ему ничего не говорят. Поэтому точную подстройку
+            // ведут кнопками, а ползунок показывает, где мы находимся.
+            // Число рядом со словом — для зрячих помощников: незрячему оно
+            // ничего не добавляет, а зрячему сразу видно, куда сдвинулся ползунок.
+            Text(
+                "Скорость речи: ${rateTitle(rateDraft)} (${"%.1f".format(rateDraft)})",
+                style = MaterialTheme.typography.bodyLarge,
             )
-        }
+            Slider(
+                value = rateDraft,
+                onValueChange = { rateDraft = it },
+                onValueChangeFinished = { applyRate(rateDraft) },
+                valueRange = RATE_MIN..RATE_MAX,
+                steps = RATE_STEPS,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Скорость речи" },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { applyRate(rateDraft - RATE_STEP) },
+                    enabled = rateDraft > RATE_MIN + 1e-4f,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Медленнее")
+                }
+                OutlinedButton(
+                    onClick = { applyRate(rateDraft + RATE_STEP) },
+                    enabled = rateDraft < RATE_MAX - 1e-4f,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Быстрее")
+                }
+            }
 
-        Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
-        // --- Договорённости сторон -----------------------------------------
+            SettingButton("Синтезатор: $engineLabel ($enginePosition из $engineTotal)") {
+                if (engines.isEmpty()) {
+                    announce("Список синтезаторов ещё не готов, нажми ещё раз.")
+                } else {
+                    // Первый в списке — системный, дальше установленные в телефоне.
+                    val currentIndex = if (activeEngine == null) 0 else engines.indexOf(activeEngine) + 1
+                    val nextIndex = (currentIndex + 1) % (engines.size + 1)
+                    val nextName = if (nextIndex == 0) null else engines[nextIndex - 1].name
+                    val nextLabel = if (nextIndex == 0) "системный" else engines[nextIndex - 1].label
+                    // Голос у нового синтезатора свой, прежний ему не принадлежит:
+                    // поэтому выбор голоса начинается заново, с его умолчания.
+                    save(settings.copy(engine = nextName, voice = null))
+                    auditionVoice(null, 1f, "Синтезатор: $nextLabel. $SAMPLE")
+                }
+            }
 
-        // Строки этой группы приходят от самой игры, а не написаны здесь:
-        // экран настроек один на всё приложение, и третья игра приносит свой
-        // список, а не ещё один экран (SETTINGS.md, 2).
-        Text("Тысяча. Договорённости сторон", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
+            // Голос у каждого из троих свой: за столом говорят приложение и два
+            // бота, и на слух их надо различать — «бот сказал» и «приложение
+            // сказало» это разные вещи, спутать их значит не понять, чей ход.
+            SettingButton(voiceRowTitle(VoiceSlot.APP, settings.voice, voices)) {
+                if (voices.isEmpty()) {
+                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
+                } else {
+                    picking = VoiceSlot.APP
+                }
+            }
 
-        val gameSettings = remember { GameSettingStore(context) }
-        THOUSAND_SETTINGS.forEach { setting ->
-            GameSettingRow(setting, gameSettings) { announce(it) }
-        }
+            SettingButton(voiceRowTitle(VoiceSlot.DURAK, settings.botVoiceDurak, voices)) {
+                if (voices.isEmpty()) {
+                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
+                } else {
+                    picking = VoiceSlot.DURAK
+                }
+            }
 
-        Spacer(Modifier.height(16.dp))
+            SettingButton(voiceRowTitle(VoiceSlot.THOUSAND, settings.botVoiceThousand, voices)) {
+                if (voices.isEmpty()) {
+                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
+                } else {
+                    picking = VoiceSlot.THOUSAND
+                }
+            }
 
-        // --- Счёт ----------------------------------------------------------
+            SettingButton("Кто говорит: ${settings.voiceMode.title}") {
+                val next = settings.voiceMode.next()
+                save(settings.copy(voiceMode = next))
+                announce(whoSpeaksPhrase(next))
+            }
 
-        SettingButton(if (resetAsked) "Нажми ещё раз — счёт обнулится" else "Сбросить счёт партий") {
-            if (resetAsked) {
-                saveScore(context, Score())
-                resetAsked = false
-                announce("Счёт обнулён.")
-            } else {
-                resetAsked = true
-                announce("Нажми ещё раз, и счёт обнулится. Побед было ${loadScore(context).wins}.")
+            // Имя соперника — единственная строка настроек, которую не
+            // переключают, а набирают: имя из готовых не выбрать. Стоит
+            // рядом с его голосом и репликами — здесь всё про того, кто
+            // сидит напротив.
+            //
+            // Кнопки «Сохранить» нет намеренно: за столом имя не правят, а
+            // лишняя кнопка после поля — ещё одна остановка для пальца на
+            // пути к «Репликам бота». Пишем на каждую букву.
+            //
+            // Склонять имя программа не станет: «у Меркурия» из «Меркурий»
+            // не вывести. Поэтому имя звучит там, где соперник действует
+            // («Меркурий берёт прикуп»), а падежные фразы говорят
+            // «соперник» (SETTINGS.md, 7).
+            Text("Имя соперника", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = settings.botName,
+                onValueChange = { name -> save(settings.copy(botName = name)) },
+                singleLine = true,
+                placeholder = { Text("Бот") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("Пусто — «Бот».", style = MaterialTheme.typography.bodyMedium)
+
+            Spacer(Modifier.height(8.dp))
+
+            SettingSwitch("Реплики соперника", settings.botTalk) { value ->
+                save(settings.copy(botTalk = value))
+                announce(if (value) "Реплики соперника включены." else "Реплики соперника выключены.")
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- Звук и вибрация ----------------------------------------------
+
+            Text("Звук и вибрация", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            SettingSwitch("Звуки стола", settings.sounds) { value ->
+                save(settings.copy(sounds = value))
+                announce(if (value) "Звуки стола включены." else "Звуки стола выключены.")
+            }
+
+            SettingSwitch("Сигналы", settings.signals) { value ->
+                save(settings.copy(signals = value))
+                announce(if (value) "Сигналы включены." else "Сигналы выключены.")
+            }
+
+            SettingSwitch("Вибрация на ход соперника", settings.vibration) { value ->
+                save(settings.copy(vibration = value))
+                announce(if (value) "Вибрация на ход соперника включена." else "Вибрация на ход соперника выключена.")
+            }
+
+            SettingSwitch("Вибрация на мои ходы", settings.ownVibration) { value ->
+                save(settings.copy(ownVibration = value))
+                announce(if (value) "Вибрация на мои ходы включена." else "Вибрация на мои ходы выключена.")
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- Общее ---------------------------------------------------------
+
+            // Общее — про приложение, а не про игру: за любым столом оно одно и
+            // то же, поэтому стоит ниже игрового и ни у одной игры не повторяется.
+            // Соперник и правила живут выше, в блоке своей игры, а из главного
+            // меню их не видно совсем: там про приложение (SETTINGS.md, 2).
+
+            Text("Общее", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            SettingButton("Порядок карт: ${settings.order.title}") {
+                val next = settings.order.next()
+                save(settings.copy(order = next))
+                announce("Порядок карт: ${next.title}.")
+            }
+
+            SettingSwitch("Крупные карты и шрифт", settings.largeText) { value ->
+                save(settings.copy(largeText = value))
+                announce(if (value) "Крупный размер включён." else "Крупный размер выключен.")
+            }
+
+            SettingSwitch("Автосохранение партии", settings.autosave) { value ->
+                save(settings.copy(autosave = value))
+                announce(
+                    if (value) {
+                        "Автосохранение включено. Незаконченную партию можно будет продолжить."
+                    } else {
+                        "Автосохранение выключено. Выйдешь посреди партии — начнёшь заново."
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- Счёт ----------------------------------------------------------
+
+            SettingButton(if (resetAsked) "Нажми ещё раз — счёт обнулится" else "Сбросить счёт партий") {
+                if (resetAsked) {
+                    saveScore(context, Score())
+                    resetAsked = false
+                    announce("Счёт обнулён.")
+                } else {
+                    resetAsked = true
+                    announce("Нажми ещё раз, и счёт обнулится. Побед было ${loadScore(context).wins}.")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- Журнал ---------------------------------------------------------
+
+            // Журнал — про то, что случилось и требует рассказа: «кнопку не
+            // читает», «говорит не тем голосом». Он пишется сам, поэтому стоит в
+            // самом низу: пока всё звучит как надо, сюда не заглядывают.
+            Text("Журнал", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Что приложение делало, кто что сказал и какие кнопки были на экране. " +
+                    "Если что-то звучит не так — отправь журнал: по нему видно, " +
+                    "до чего дошло дело.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            SettingButton("Отправить журнал: $journalSize") {
+                when (val share = Journal.shareIntent(context)) {
+                    is JournalShare.Ready -> {
+                        val shown = runCatching { context.startActivity(share.intent) }
+                        if (shown.isSuccess) {
+                            announce("Выбирай, куда отправить журнал.")
+                        } else {
+                            // Системный выбор не открылся — это тоже поломка, и
+                            // назвать её надо вслух, а не молчанием.
+                            val why = shown.exceptionOrNull()?.message ?: "причина неизвестна"
+                            announce("Выбор «Поделиться» не открылся: $why.")
+                        }
+                    }
+
+                    JournalShare.Empty -> announce("Журнал пуст, отправлять нечего.")
+
+                    is JournalShare.Failed ->
+                        announce("Журнал не удалось отдать наружу: ${share.reason}.")
+                }
+            }
+
+            SettingButton(if (clearAsked) "Нажми ещё раз — журнал очистится" else "Очистить журнал") {
+                if (clearAsked) {
+                    Journal.clear()
+                    journalSize = "пусто"
+                    clearAsked = false
+                    announce("Журнал очищен.")
+                } else {
+                    clearAsked = true
+                    announce("Нажми ещё раз, и журнал очистится. Сейчас в нём $journalSize.")
+                }
             }
         }
 
@@ -529,6 +679,16 @@ private fun VoiceOption(label: String, selected: Boolean, onClick: () -> Unit) {
         )
     }
 }
+
+/** Название игры в шапке её блока: то же, что на экране самой игры. */
+/** Какая половина настроек открыта. Из главного меню половина всегда одна — [COMMON]. */
+private enum class SettingsPart { GAME, COMMON }
+
+private fun gameTitle(game: String): String = if (game == GAME_DURAK) "Дурак" else "Тысяча"
+
+/** Соперник той игры, чьи настройки открыты: у каждой игры он свой. */
+private fun botDifficulty(game: String, settings: Settings): Difficulty =
+    if (game == GAME_DURAK) settings.botDifficultyDurak else settings.botDifficultyThousand
 
 /** Объяснить выбранный режим словами: «авто» само по себе ничего не говорит. */
 private fun whoSpeaksPhrase(mode: VoiceMode): String = when (mode) {

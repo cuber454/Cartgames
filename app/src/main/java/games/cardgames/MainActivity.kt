@@ -4,12 +4,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -27,8 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
+import games.cardgames.durak.durakTransferAllowed
 import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
 import games.cardgames.rules.thousandRules
@@ -40,15 +46,35 @@ import games.cardgames.settings.loadSettings
 import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
-import games.cardgames.speech.sayEvent
+import kotlinx.coroutines.delay
+
+/**
+ * Пауза перед записью дерева экрана. Снимаем его не в тот же миг, а когда
+ * разметка улеглась: иначе в журнал попадёт предыдущий экран, и искать в нём
+ * пропавшую кнопку будет нечего.
+ */
+private const val TREE_DUMP_DELAY_MS = 600L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Журнал заводим до всего остального: беда, о которой придётся
+        // рассказывать, случается с первых секунд — на первом же чтении
+        // экрана. Здесь же запоминается контекст, чтобы строку можно было
+        // записать откуда угодно.
+        Journal.start(this)
         setContent {
             MaterialTheme {
+                // Панели системы — статус-строка сверху и полоса навигации
+                // снизу — при targetSdk 36 рисуются поверх приложения. Без
+                // этого отступа нижние кнопки уезжают под полосу: палец до
+                // них доходит, а нажатие забирает система. Отступ внутри
+                // Surface, а не на нём: так фон остаётся во всё окно, а
+                // содержимое отходит от панелей.
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    App()
+                    Box(modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
+                        App()
+                    }
                 }
             }
         }
@@ -75,6 +101,17 @@ private fun App() {
     // и недоигранная тысяча друг о друге не знают.
     val session = remember { DurakSession(context) }
     val thousand = remember { ThousandSession(context) }
+
+    // Что видит скринридер на открывшемся экране — в журнал. Это ответ на
+    // «кнопка есть, а он её не читает»: в записи видно каждое имя, которое до
+    // него дошло, и где узел стоит на экране — а узел за границей экрана и
+    // есть та самая пропавшая кнопка.
+    val view = LocalView.current
+    LaunchedEffect(screen) {
+        delay(TREE_DUMP_DELAY_MS)
+        Journal.note("экран", "открыт экран «$screen»")
+        Journal.dumpTree(view)
+    }
 
     fun openSettings(from: String) {
         settingsBack = from
@@ -123,7 +160,12 @@ private fun App() {
             onRules = { openRules("thousand", GAME_THOUSAND) },
         )
 
-        "settings" -> SettingsScreen(onExit = { screen = settingsBack })
+        // Чьи настройки открывать: из меню — только общие, из-за стола —
+        // с правилами и соперником этой игры (SETTINGS.md, 2).
+        "settings" -> SettingsScreen(
+            game = settingsBack.takeIf { it != "menu" },
+            onExit = { screen = settingsBack },
+        )
 
         "rules" -> if (rulesGame == GAME_THOUSAND) {
             RulesScreen(title = "Тысяча", sections = thousandRules, onExit = { screen = rulesBack })
@@ -177,7 +219,6 @@ private fun GamesScreen(
         (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
 
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
-    val view = LocalView.current
 
     LaunchedEffect(Unit) {
         if (!appVoice) return@LaunchedEffect
@@ -206,17 +247,17 @@ private fun GamesScreen(
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (paused) "Дурак — продолжить партию" else "Дурак — игра против бота")
+            Text(if (paused) "Дурак — продолжить партию" else "Дурак — игра против соперника")
         }
 
         if (paused) {
             Spacer(Modifier.height(8.dp))
-            // Раздача берёт режим из настроек: перевод можно выключить
+            // Раздача берёт режим из правил «Дурака»: перевод можно выключить
             // («подкидной» дурак) — тогда новая партия идёт без него.
             Button(
                 onClick = {
                     saveSettings(context, settings.copy(lastGame = GAME_DURAK))
-                    session.restart(transferAllowed = settings.transfer)
+                    session.restart(transferAllowed = durakTransferAllowed(context))
                     onDurak()
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -234,7 +275,7 @@ private fun GamesScreen(
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (thousandPaused) "Тысяча — продолжить партию" else "Тысяча — игра против бота")
+            Text(if (thousandPaused) "Тысяча — продолжить партию" else "Тысяча — игра против соперника")
         }
 
         if (thousandPaused) {
@@ -257,8 +298,12 @@ private fun GamesScreen(
 }
 
 /**
- * Меню: игры и помощник в одной программе, общий слой озвучки.
- * Раздел «Помощник» появится следом за игрой.
+ * Главное меню: игра, список игр, настройки — и общий слой озвучки.
+ *
+ * Порядок один и тот же, и он же — порядок дел за столом: сперва игра, в
+ * которую играли последней (вернуться к ней хотят чаще всего), потом выбор
+ * другой игры, потом настройки. Кнопки-заглушки здесь не стоят: раздел,
+ * которого ещё нет, читается как поломка — «нажимаю, а он молчит».
  */
 @Composable
 private fun MenuScreen(
@@ -293,7 +338,6 @@ private fun MenuScreen(
 
     // Кто говорит: приложение или скринридер. В каждый момент — ровно один.
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
-    val view = LocalView.current
 
     // Приветствие звучит только тогда, когда говорит приложение. В нём нет
     // ничего, чего нет на экране, — а когда читает скринридер, он и так
@@ -322,14 +366,14 @@ private fun MenuScreen(
         if (settings.lastGame == GAME_THOUSAND) {
             Button(onClick = onThousand, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    if (thousandPaused) "Продолжить партию в тысячу" else "Тысяча — игра против бота",
+                    if (thousandPaused) "Продолжить партию в тысячу" else "Тысяча — игра против соперника",
                 )
             }
             Spacer(Modifier.height(8.dp))
         } else {
             Button(onClick = onDurak, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    if (paused) "Продолжить партию в дурака" else "Дурак — игра против бота",
+                    if (paused) "Продолжить партию в дурака" else "Дурак — игра против соперника",
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -346,20 +390,12 @@ private fun MenuScreen(
         // Справка по правилам живёт на экране игры, в «Ещё»: её открывают
         // за столом, когда споткнулись о ход, а не из меню. В главном меню
         // лишняя кнопка только удлиняет список.
+        //
+        // Подпись называет то, что откроется из меню, — общую половину
+        // настроек. Настройки игры приходят сюда не отсюда, а из-за стола,
+        // кнопкой наверху (SETTINGS.md, 2).
         Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
-            Text("Настройки — речь, звук, вибрация")
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Button(
-            // Ответ на нажатие: игрок ждёт его, поэтому говорим и тогда,
-            // когда за столом говорит скринридер, — но не поверх него,
-            // а ему же, чтобы он произнёс это в свою очередь.
-            onClick = { sayEvent(view, speaker, appVoice, "Раздел «Помощник» ещё в работе.") },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Помощник — скоро")
+            Text("Настройки — речь, звук, журнал")
         }
     }
 }

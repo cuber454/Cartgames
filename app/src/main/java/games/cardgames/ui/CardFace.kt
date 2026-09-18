@@ -54,6 +54,10 @@ private val Edge = Color(0xFF1B1B1B)
 private val RedSuit = Color(0xFFB00020)
 private val BlackSuit = Color(0xFF101010)
 
+/** Рубашка: тёмная спинка и светлый узор по ней — контраст для слабовидящего. */
+private val BackFace = Color(0xFF23324F)
+private val BackInk = Color(0x88FFFFFF)
+
 /** Раскладка мастей на номерной карте: доли от ширины и высоты. */
 private val COLUMN_LEFT = 0.34f
 private val COLUMN_RIGHT = 0.66f
@@ -100,6 +104,46 @@ fun CardFace(
             suitSize = cornerSuit,
             modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp).rotate(180f),
         )
+    }
+}
+
+/**
+ * Карта рубашкой вверх — то, что ещё не открыто.
+ *
+ * Рубашка нарисована, а не залита одним цветом: однотонная спинка на
+ * маленькой карте читается как пустое место, а по узору сразу видно, что
+ * это карта и что она закрыта. Значков масти тут нет и быть не может: эту
+ * карту никто не открывал, и нарисовать на ней что-то значимое значило бы
+ * соврать.
+ *
+ * Для скринридера рубашка молчит ([clearAndSetSemantics]): слова о том, что
+ * лежит на столе, говорит подпись рядом, а не картинка. И уж тем более
+ * молчит о том, что под ней, — этого не знает и само приложение.
+ */
+@Composable
+fun CardBack(
+    width: Dp,
+    height: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Box(
+        modifier = modifier
+            .size(width, height)
+            .background(BackFace, shape)
+            .border(2.dp, Edge, shape)
+            .clearAndSetSemantics {},
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(2.dp)) {
+            val step = size.minDimension * 0.24f
+            val stroke = size.minDimension * 0.05f
+            var x = -size.height
+            while (x < size.width + size.height) {
+                drawLine(BackInk, Offset(x, 0f), Offset(x + size.height, size.height), stroke)
+                drawLine(BackInk, Offset(x, size.height), Offset(x + size.height, 0f), stroke)
+                x += step
+            }
+        }
     }
 }
 
