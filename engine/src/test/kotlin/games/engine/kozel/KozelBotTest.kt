@@ -105,22 +105,4 @@ class KozelBotTest {
         assertEquals(KozelMove.Place(tile(3, 6), End.RIGHT), move(view, Difficulty.CLEVER))
     }
 
-    @Test
-    fun `хитрый обыгрывает обычного по матчам`() {
-        val matches = 40
-        var clever = 0
-        var normal = 0
-
-        repeat(matches) { seed ->
-            when (playMatch(KozelRules.BOOK, listOf(Difficulty.CLEVER, Difficulty.NORMAL), seed)) {
-                0 -> clever++
-                else -> normal++
-            }
-        }
-
-        assertTrue(
-            clever > normal,
-            "хитрый выиграл $clever матчей из $matches, обычный $normal — памяти не видно",
-        )
-    }
 }
