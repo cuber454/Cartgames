@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_DURAK
 import games.cardgames.GAME_THOUSAND
 import games.cardgames.diag.Journal
+import games.cardgames.diag.JournalShare
 import games.cardgames.durak.DURAK_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
@@ -539,12 +540,23 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             )
 
             SettingButton("Отправить журнал: $journalSize") {
-                val intent = Journal.shareIntent(context)
-                if (intent == null) {
-                    announce("Журнал пуст, отправлять нечего.")
-                } else {
-                    runCatching { context.startActivity(intent) }
-                    announce("Выбирай, куда отправить журнал.")
+                when (val share = Journal.shareIntent(context)) {
+                    is JournalShare.Ready -> {
+                        val shown = runCatching { context.startActivity(share.intent) }
+                        if (shown.isSuccess) {
+                            announce("Выбирай, куда отправить журнал.")
+                        } else {
+                            // Системный выбор не открылся — это тоже поломка, и
+                            // назвать её надо вслух, а не молчанием.
+                            val why = shown.exceptionOrNull()?.message ?: "причина неизвестна"
+                            announce("Выбор «Поделиться» не открылся: $why.")
+                        }
+                    }
+
+                    JournalShare.Empty -> announce("Журнал пуст, отправлять нечего.")
+
+                    is JournalShare.Failed ->
+                        announce("Журнал не удалось отдать наружу: ${share.reason}.")
                 }
             }
 

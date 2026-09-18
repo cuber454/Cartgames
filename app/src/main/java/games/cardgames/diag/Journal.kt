@@ -38,6 +38,17 @@ import java.util.concurrent.Executors
 object Journal {
 
     private const val FILE_NAME = "cartgames-journal.txt"
+
+    /**
+     * Подкаталог памяти приложения, в котором лежит журнал.
+     *
+     * Не прихоть, а условие работы двери наружу: [FileProvider] ищет файл
+     * внутри корня, а корень, названный самим файлом, файла в себе не
+     * содержит — и отрезать от пути такой корень нечем. Имя обязано
+     * совпадать с `path` в `res/xml/file_paths.xml`.
+     */
+    private const val DIR_NAME = "journal"
+
     private const val MAX_BYTES = 512 * 1024L
 
     /**
@@ -68,6 +79,7 @@ object Journal {
 
     fun start(context: Context) {
         appContext = context.applicationContext
+        moveOldJournal(context)
         // Размер экрана — рядом с деревьями: по нему видно, попал ли узел за
         // нижний край или за полосу навигации, а без него координаты в дереве
         // говорят только «где-то там».
@@ -86,34 +98,55 @@ object Journal {
         writer.execute {
             runCatching {
                 val file = file(context)
+                file.parentFile?.mkdirs()
                 file.appendText(line + "\n")
                 trim(file)
             }
         }
     }
 
-    fun file(context: Context): File = File(context.filesDir, FILE_NAME)
+    /**
+     * Журнал прежних версий лежал прямо в памяти приложения, без подкаталога.
+     * Переносим, а не бросаем: старые записи — ровно то, за чем в журнал и
+     * лезут, и обновление приложения не повод их терять.
+     */
+    private fun moveOldJournal(context: Context) {
+        val old = File(context.filesDir, FILE_NAME)
+        val now = file(context)
+        if (!old.isFile || now.isFile) return
+        runCatching {
+            now.parentFile?.mkdirs()
+            if (!old.renameTo(now)) old.copyTo(now, overwrite = true)
+        }
+    }
+
+    fun file(context: Context): File = File(File(context.filesDir, DIR_NAME), FILE_NAME)
 
     /**
-     * Отдать журнал наружу — системным «Поделиться». null, если отправлять
-     * нечего.
+     * Отдать журнал наружу — системным «Поделиться».
      *
      * Файл лежит во внутренней памяти приложения, куда снаружи доступа нет.
      * [FileProvider] открывает на него одну дверь с разрешением на время
      * отправки: без него мессенджеру нечего было бы взять, а открывать всю
      * память наружу незачем.
+     *
+     * Сбой двери возвращается причиной ([JournalShare.Failed]), а не пустотой
+     * журнала: молчание про причину однажды уже стоило часа поисков не там,
+     * где сломано.
      */
-    fun shareIntent(context: Context): Intent? = runCatching {
+    fun shareIntent(context: Context): JournalShare {
         val file = file(context)
-        if (!file.exists() || file.length() == 0L) return null
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.journal", file)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        Intent.createChooser(send, "Отправить журнал")
-    }.getOrNull()
+        if (!file.isFile || file.length() == 0L) return JournalShare.Empty
+        return runCatching {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.journal", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            JournalShare.Ready(Intent.createChooser(send, "Отправить журнал"))
+        }.getOrElse { JournalShare.Failed(it.message ?: it.javaClass.simpleName) }
+    }
 
     /** Последние строки журнала — их читают на экране. */
     fun tail(context: Context, limit: Int = 200): List<String> = runCatching {
@@ -214,4 +247,24 @@ object Journal {
         val tail = file.readLines().takeLast(KEEP_LINES)
         file.writeText(tail.joinToString("\n", postfix = "\n"))
     }
+}
+
+/**
+ * Чем кончилась попытка отдать журнал наружу.
+ *
+ * Отдельный тип, а не «намерение или ничего»: пустой журнал и сломавшаяся
+ * отправка — разные беды, а сказать о них одним словом значит послать искать
+ * не там. Игрок только что прочитал про сотню строк — и услышал «журнал
+ * пуст»; так выглядит поломка, о которой умолчали.
+ */
+sealed interface JournalShare {
+
+    /** Намерение готово: осталось показать системный выбор, куда отправить. */
+    data class Ready(val intent: Intent) : JournalShare
+
+    /** Отправлять и вправду нечего: журнал пуст. */
+    data object Empty : JournalShare
+
+    /** Отдать не вышло — и вот почему. Молчать об этом нельзя. */
+    data class Failed(val reason: String) : JournalShare
 }
