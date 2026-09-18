@@ -935,7 +935,10 @@ private fun botPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
     is ThousandMove.TakePrikups ->
         if (prikup.isEmpty()) "Бот берёт прикуп."
         else "Бот берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
-    is ThousandMove.Discard -> "Бот снёс карту."
+    // Снос уходит рубашкой вверх, и в чужой руке эту карту потом не увидеть:
+    // не назовём сейчас — игрок найдёт её только перебором руки. Играем
+    // вдвоём, поэтому весь снос достаётся игроку.
+    is ThousandMove.Discard -> "Бот снёс карту: тебе ${move.cards.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Praise -> "Бот хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
     ThousandMove.Golden -> "Бот объявляет золотой кон: заказ 120, очки двойные."
     ThousandMove.Raspis -> "Бот расписывается."

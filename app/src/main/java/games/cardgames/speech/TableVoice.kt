@@ -143,9 +143,14 @@ class TableVoice(
      * когда за столом говорит скринридер: игрок ждёт ответ, а не чтение
      * кнопки. Скринридера перед фразой просим умолкнуть — это делает
      * [Speaker.say].
+     *
+     * В «Повтор» такой ответ не идёт: повторяют событие за столом, а не
+     * ответ на собственное нажатие. Иначе, спросив «Что можно» и нажав затем
+     * «Повтори», игрок слышит один и тот же ответ дважды — и обе кнопки
+     * выглядят как две одинаковые.
      */
     fun sayRequested(text: String) {
-        note(text)
+        note(text, repeatable = false)
         Journal.note("речь", "игрок спросил — отвечает приложение: $text")
         speaker.say(text)
     }
@@ -153,8 +158,8 @@ class TableVoice(
     /** Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]. */
     fun waitMs(): Long = (endsAt - System.currentTimeMillis()).coerceAtLeast(minWaitMs)
 
-    private fun note(text: String, afterMs: Long = 0L) {
-        remember(text)
+    private fun note(text: String, afterMs: Long = 0L, repeatable: Boolean = true) {
+        if (repeatable) remember(text)
         endsAt = System.currentTimeMillis() + afterMs + speechMs(text, rate())
     }
 }
