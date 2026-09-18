@@ -238,6 +238,56 @@ class ThousandRoundTest {
     }
 
     @Test
+    fun `четыре туза на руке видно тогда, когда снос лёг`() {
+        // До сноса карты ещё меняются: прикуп не взят, снос не сделан, —
+        // и «на руке» ничего не значит.
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(
+                    c(Rank.ACE, Suit.SPADES),
+                    c(Rank.ACE, Suit.CLUBS),
+                    c(Rank.ACE, Suit.DIAMONDS),
+                    c(Rank.ACE, Suit.HEARTS),
+                    c(Rank.NINE, Suit.SPADES),
+                ),
+                listOf(c(Rank.NINE, Suit.CLUBS)),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        assertFalse(round.hadAllAces(0), "торг ещё не кончился, прикуп не взят")
+
+        round.apply(0, ThousandMove.TakePrikups(0))
+        assertFalse(round.hadAllAces(0), "прикуп взят, но снос ещё не сделан")
+
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.NINE, Suit.SPADES))))
+        assertTrue(round.hadAllAces(0))
+        assertFalse(round.hadAllAces(1), "у защищающегося тузов нет вовсе")
+    }
+
+    @Test
+    fun `ушедший в снос туз четырёх не оставляет`() {
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(
+                    c(Rank.ACE, Suit.SPADES),
+                    c(Rank.ACE, Suit.CLUBS),
+                    c(Rank.ACE, Suit.DIAMONDS),
+                    c(Rank.ACE, Suit.HEARTS),
+                    c(Rank.NINE, Suit.SPADES),
+                ),
+                listOf(c(Rank.NINE, Suit.CLUBS)),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.ACE, Suit.HEARTS))))
+
+        assertFalse(round.hadAllAces(0), "туз ушёл защитнику, и тузов осталось три")
+    }
+
+    @Test
     fun `масть захода обязательна, а без масти — любая карта`() {
         // Заказчик отдал девятку бубён: у защищающегося остались девятка
         // треф и девятка бубён. Зайдя в трефу, заказчик заставляет его

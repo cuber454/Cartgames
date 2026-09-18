@@ -445,6 +445,13 @@ fun ThousandScreen(
         if (round.phase == Phase.PLAY) {
             append(" Взяток: у тебя ${round.tricksOf(PLAYER)}, у бота ${round.tricksOf(BOT)}.")
             append(" Очков: ${round.roundPoints(PLAYER)} и ${round.roundPoints(BOT)}.")
+            // Четыре туза на руке зрячий видит сразу, а на слух их надо
+            // пересчитать по всей руке — и то лишь пока ни один не сыгран.
+            // Про руку бота молчим: это закрытое знание, и выдавать его
+            // незачем.
+            if (match.rules.aceMarriage && round.hadAllAces(PLAYER)) {
+                append(" Все четыре туза на руке — нужна хотя бы одна взятка.")
+            }
         }
     }
 
@@ -779,8 +786,15 @@ private fun resumePhrase(round: ThousandRound, match: ThousandMatch): String {
         Phase.OVER -> "Кон окончен."
     }
     val trump = round.trumpSuit?.let { " Козырь — ${it.spoken}." } ?: ""
+    // Тузы напоминаем и здесь: поднятая партия — та, где игрок помнит о
+    // столе меньше всего, а четыре туза на руке он мог и не заметить.
+    val aces = if (match.rules.aceMarriage && round.hadAllAces(PLAYER)) {
+        " Все четыре туза на руке — нужна хотя бы одна взятка."
+    } else {
+        ""
+    }
     val turn = if (round.turn == PLAYER) " Твой ход." else " Ход бота."
-    return "Продолжаем партию. $body$trump " +
+    return "Продолжаем партию. $body$trump$aces " +
         "Счёт: у тебя ${match.scores[PLAYER]}, у бота ${match.scores[BOT]}.$turn"
 }
 
@@ -802,12 +816,27 @@ private fun roundPhrase(
         val who = if (scribbler == PLAYER) "Ты расписался" else "Бот расписался"
         parts += "Кон окончен. $who: заказ ${round.currentBid} не играется."
     } else if (declarer != null) {
-        val points = round.roundPoints(declarer)
+        // Очки берём у матча, а не у кона: договорённости сторон добавляют
+        // к кону своё уже после розыгрыша, и по взяткам их не видно. Иначе
+        // сказали бы «заказ не выполнен» там, где матч только что записал
+        // выполнение, — а это худшая из возможных ошибок за столом.
+        val points = summary.points.getOrElse(declarer) { round.roundPoints(declarer) }
         val who = if (declarer == PLAYER) "ты" else "бот"
         val done = if (points >= round.currentBid) "Заказ выполнен." else "Заказ не выполнен."
         parts += "Кон окончен. Заказ ${round.currentBid}, $who набрал $points. $done"
     } else {
         parts += "Кон окончен."
+    }
+
+    // Тузовый марьяж — договорённость сторон, и в очках кона выше он уже
+    // сидит. Называем его отдельно: без этого «набрал 300» на ста взятках
+    // звучит как ошибка счёта.
+    summary.aceMarried.forEach {
+        parts += if (it == PLAYER) {
+            "Тузовый марьяж: четыре туза и взятка — плюс 200."
+        } else {
+            "У бота тузовый марьяж: плюс 200."
+        }
     }
 
     val writes = summary.deltas.mapIndexed { seat, delta ->

@@ -32,7 +32,15 @@ val RASPIS_PENALTY = GameSetting(
     default = false,
 )
 
-val THOUSAND_SETTINGS: List<GameSetting> = listOf(SAMOSVAL, RASPIS_PENALTY)
+val ACE_MARRIAGE = GameSetting(
+    key = "thousand.ace_marriage",
+    title = "Тузовый марьяж",
+    about = "Четыре туза на руке и хотя бы одна взятка дают 200 — в заказ или в запись.",
+    activation = Activation.NEW_MATCH,
+    default = false,
+)
+
+val THOUSAND_SETTINGS: List<GameSetting> = listOf(SAMOSVAL, RASPIS_PENALTY, ACE_MARRIAGE)
 
 /**
  * Договорённости, с которыми начинают партию.
@@ -46,5 +54,6 @@ fun loadThousandRules(context: Context): ThousandRules {
     return ThousandRules(
         samosval = store.value(SAMOSVAL),
         raspisPenalty = store.value(RASPIS_PENALTY),
+        aceMarriage = store.value(ACE_MARRIAGE),
     )
 }

@@ -320,6 +320,81 @@ class ThousandMatchTest {
     }
 
     @Test
+    fun `тузовый марьяж — четыре туза и взятка дают двести`() {
+        val match = ThousandMatch.forTesting(
+            scores = listOf(0, 0),
+            rules = ThousandRules(aceMarriage = true),
+        )
+        // Заказ 120, а набрано сто: марьяж и закрывает заказ, и перекрывает его.
+        val summary = match.record(
+            0, bid = 120, points = intArrayOf(100, 20), tricks = intArrayOf(7, 4),
+            allAces = listOf(0),
+        )
+
+        assertEquals(listOf(0), summary.aceMarried)
+        assertEquals(listOf(120, 20), summary.deltas, "заказ выполнен: 100 очков плюс 200 за тузы")
+    }
+
+    @Test
+    fun `без взятки тузовый марьяж не считается`() {
+        val match = ThousandMatch.forTesting(
+            scores = listOf(300, 0),
+            rules = ThousandRules(aceMarriage = true),
+        )
+        val summary = match.record(
+            0, bid = 100, points = intArrayOf(0, 120), tricks = intArrayOf(0, 11),
+            allAces = listOf(0),
+        )
+
+        assertEquals(emptyList(), summary.aceMarried)
+        assertEquals(-100, summary.deltas[0], "заказ не выполнен: за тузы без взятки не платят")
+    }
+
+    @Test
+    fun `марьяж защитнику идёт в его запись`() {
+        // Защитник пишет своё, округлённое до пяти, — и 200 в это своё входят.
+        val match = ThousandMatch.forTesting(
+            scores = listOf(0, 0),
+            rules = ThousandRules(aceMarriage = true),
+        )
+        val summary = match.record(
+            0, bid = 100, points = intArrayOf(110, 10), tricks = intArrayOf(8, 3),
+            allAces = listOf(1),
+        )
+
+        assertEquals(listOf(1), summary.aceMarried)
+        assertEquals(210, summary.deltas[1], "10 очков защитника и 200 за тузы")
+    }
+
+    @Test
+    fun `без договорённости четыре туза ничего не стоят`() {
+        val match = ThousandMatch.forTesting(scores = listOf(0, 0))
+        val summary = match.record(
+            0, bid = 100, points = intArrayOf(110, 10), tricks = intArrayOf(8, 3),
+            allAces = listOf(0),
+        )
+
+        assertEquals(emptyList(), summary.aceMarried)
+        assertEquals(listOf(100, 10), summary.deltas)
+    }
+
+    @Test
+    fun `расписанный кон тузового марьяжа не приносит`() {
+        // Роспись очков не пишет никому, и 200 за тузы — тоже очки.
+        val match = ThousandMatch.forTesting(
+            scores = listOf(200, 200),
+            rules = ThousandRules(aceMarriage = true),
+        )
+        val summary = match.record(
+            0, bid = 105, points = intArrayOf(10, 20), tricks = intArrayOf(0, 0),
+            raspised = 0, allAces = listOf(1),
+        )
+
+        assertEquals(emptyList(), summary.aceMarried)
+        assertEquals(listOf(-105, 50), summary.deltas)
+    }
+
+    @Test
     fun `вдвоём бочка торгуется как все — обязательства на потолок нет`() {
         val two = ThousandRound.forTesting(
             hands = List(2) { listOf(c(Rank.NINE, Suit.SPADES)) },

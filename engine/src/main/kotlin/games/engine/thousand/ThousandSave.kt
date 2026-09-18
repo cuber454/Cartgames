@@ -23,15 +23,17 @@ import games.engine.Suit
 object ThousandSave {
 
     /** Версия формата. Меняется вместе с составом полей. */
-    const val FORMAT = 2
+    const val FORMAT = 3
 
     /**
      * Записи какой давности ещё читаются.
      *
-     * Версия 2 добавила договорённости сторон и счётчик росписей, и обе
-     * строки в старой записи означают ровно то же, что и умолчание: партия,
-     * начатая по книге, с нулём росписей. Поэтому запись версии 1 читается
-     * без потерь, и брошенная партия после обновления не пропадает.
+     * Версия 2 добавила договорённости сторон и счётчик росписей, версия 3 —
+     * тузовый марьяж и признак того, у кого тузы на руке. Каждая из этих
+     * строк в старой записи означает ровно то же, что и умолчание: партия,
+     * начатая по книге, с нулём росписей и без тузового марьяжа. Поэтому
+     * записи версий 1 и 2 читаются без потерь, и брошенная партия после
+     * обновления не пропадает.
      */
     private val READABLE_FORMATS = 1..FORMAT
 
@@ -56,6 +58,7 @@ object ThousandSave {
         // партия должна доигрываться по тем правилам, по каким её начали.
         appendLine("samosval ${if (match.rules.samosval) 1 else 0}")
         appendLine("raspisPenalty ${if (match.rules.raspisPenalty) 1 else 0}")
+        appendLine("aceMarriage ${if (match.rules.aceMarriage) 1 else 0}")
         appendLine("barrel ${match.barrelSeat?.toString() ?: DASH}")
         appendLine("barrelTries ${match.barrelTries}")
         appendLine("rounds ${match.roundsPlayed}")
@@ -75,6 +78,10 @@ object ThousandSave {
         appendLine("points ${round.trickPointsAll().joinToString(" ")}")
         appendLine("marriage ${round.marriageAll().joinToString(" ")}")
         appendLine("tricks ${round.tricksAll().joinToString(" ")}")
+        // Тузы, ушедшие во взятки, на руке уже не найти: признак пишется
+        // отдельной строкой, иначе поднятая посреди розыгрыша партия
+        // потеряла бы тузовый марьяж.
+        appendLine("allAces ${(0 until round.playerCount).filter { round.hadAllAces(it) }.joinToString(" ")}")
 
         for (seat in 0 until round.playerCount) {
             appendLine("hand$seat ${round.handOf(seat).joinToString(" ") { codeOf(it) }}")
@@ -153,7 +160,12 @@ object ThousandSave {
         val rules = ThousandRules(
             samosval = fields["samosval"]?.let { it == "1" } ?: false,
             raspisPenalty = fields["raspispenalty"]?.let { it == "1" } ?: false,
+            aceMarriage = fields["acemarriage"]?.let { it == "1" } ?: false,
         )
+        // Как и у росписей: в записи постарше строки нет, и это не поломка —
+        // тузового марьяжа в той партии не было ни у кого.
+        val allAces = fields["allaces"]?.let { parseSeats(it, playerCount) ?: return null }
+            ?: emptySet()
         val points = parseInts(fields["points"], playerCount) ?: return null
         val marriage = parseInts(fields["marriage"], playerCount) ?: return null
         val tricks = parseInts(fields["tricks"], playerCount) ?: return null
@@ -196,6 +208,7 @@ object ThousandSave {
             table = table,
             barrelSeat = barrel,
             raspised = raspised,
+            allAces = allAces,
         )
 
         val match = ThousandMatch.restore(

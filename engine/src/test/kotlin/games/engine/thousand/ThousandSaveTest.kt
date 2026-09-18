@@ -1,8 +1,10 @@
 package games.engine.thousand
 
+import games.engine.Rank
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -101,6 +103,45 @@ class ThousandSaveTest {
     }
 
     @Test
+    fun `тузовый марьяж переживает запись и в договорённости, и в признаке`() {
+        // Тузы уходят во взятки по одному, и на руке их потом не найти:
+        // признак пишется отдельной строкой, иначе поднятая посреди
+        // розыгрыша партия потеряла бы марьяж.
+        val round = aceRound()
+        assertTrue(round.hadAllAces(0), "расклад для теста собран с четырьмя тузами у первого")
+
+        val match = ThousandMatch.forTesting(
+            scores = listOf(0, 0),
+            rules = ThousandRules(aceMarriage = true),
+        )
+        val saved = assertNotNull(ThousandSave.read(ThousandSave.write(match, round)))
+
+        assertTrue(saved.match.rules.aceMarriage)
+        assertTrue(saved.round.hadAllAces(0))
+        assertFalse(saved.round.hadAllAces(1))
+    }
+
+    /**
+     * Раздача, в которой все четыре туза у первого, а снос уже сделан: тузы
+     * на руке, розыгрыш начат. В колоде 24 карты, и все они должны быть на
+     * столе — иначе запись не поднимется.
+     */
+    private fun aceRound(): ThousandRound {
+        val deck = fullDeck24()
+        val aces = deck.filter { it.rank == Rank.ACE }
+        val rest = deck.filterNot { it.rank == Rank.ACE }
+        val round = ThousandRound.forTesting(
+            hands = listOf((aces + rest.take(6)).toList(), rest.drop(6).take(10).toList()),
+            prikups = listOf(rest.drop(16).take(2).toList(), rest.drop(18).take(2).toList()),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(listOf(rest[16])))
+        return round
+    }
+
+    @Test
     fun `договорённости сторон и счётчик росписей переживают запись`() {
         val rules = ThousandRules(samosval = true, raspisPenalty = true)
         val match = ThousandMatch.forTesting(
@@ -125,16 +166,17 @@ class ThousandSaveTest {
 
     @Test
     fun `запись прежней версии поднимается как партия по книге`() {
-        // Запись версии 1 не знала ни договорённостей, ни счётчика росписей.
-        // Обе недостающие строки означают ровно то же, что умолчание, —
-        // поэтому брошенная партия после обновления не пропадает.
+        // Запись версии 1 не знала ни договорённостей, ни счётчика росписей,
+        // ни тузового марьяжа. Все недостающие строки означают ровно то же,
+        // что умолчание, — поэтому брошенная партия после обновления не
+        // пропадает.
+        val missing = setOf(
+            "raspises", "samosval", "raspisPenalty", "aceMarriage", "allAces",
+        )
         val match = ThousandMatch.forTesting(scores = listOf(300, 400), bolts = listOf(1, 0))
         val old = ThousandSave.write(match, match.startRound(Random(4)))
             .lineSequence()
-            .filterNot { line ->
-                val key = line.substringBefore(' ')
-                key == "raspises" || key == "samosval" || key == "raspisPenalty"
-            }
+            .filterNot { it.substringBefore(' ') in missing }
             .joinToString("\n")
             .replace("format ${ThousandSave.FORMAT}", "format 1")
 
