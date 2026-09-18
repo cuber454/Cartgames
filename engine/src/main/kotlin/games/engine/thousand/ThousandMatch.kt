@@ -17,6 +17,9 @@ const val SAMOSVAL_AT = 555
 /** Сколько росписей копить до штрафа. */
 const val RASPISES_TO_PENALTY = 3
 
+/** Сколько стоит тузовый марьяж: четыре туза на руке и хотя бы одна взятка. */
+const val ACE_MARRIAGE_POINTS = 200
+
 /** Сколько конов даётся на бочке, прежде чем с неё слетишь. */
 const val BARREL_TRIES = 3
 
@@ -30,6 +33,15 @@ const val BARREL_TRIES = 3
 data class RoundSummary(
     /** Сколько записал каждый за этот кон. 0 — не записал ничего. */
     val deltas: List<Int>,
+    /**
+     * Очки кона каждого места — те, по которым решалось, выполнен ли заказ.
+     *
+     * Не то же самое, что [ThousandRound.roundPoints]: договорённости сторон
+     * (пока это тузовый марьяж) добавляют очки уже за коном, и по взяткам их
+     * не видно. Экран считает заказ по этим числам, а не по коневым, иначе
+     * сказал бы «не выполнен» там, где матч только что записал выполнение.
+     */
+    val points: List<Int>,
     /** Кто получил болт: не взял ни одной взятки. */
     val bolted: List<Int>,
     /** Кто слетел с бочки — не одолел её или уступил место. */
@@ -44,6 +56,8 @@ data class RoundSummary(
     val samosvaled: List<Int> = emptyList(),
     /** Кому этот кон принёс штраф за третью роспись. */
     val raspisPenalised: Int? = null,
+    /** Кому этот кон принёс тузовый марьяж — договорённость сторон. */
+    val aceMarried: List<Int> = emptyList(),
 )
 
 /**
@@ -97,7 +111,8 @@ class ThousandMatch(
         val declarer = checkNotNull(round.declarer) { "кон без заказчика" }
         val points = IntArray(playerCount) { round.roundPoints(it) }
         val tricks = IntArray(playerCount) { round.tricksOf(it) }
-        return record(declarer, round.currentBid, points, tricks, round.raspised)
+        val allAces = (0 until playerCount).filter { round.hadAllAces(it) }
+        return record(declarer, round.currentBid, points, tricks, round.raspised, allAces)
     }
 
     /**
@@ -113,9 +128,27 @@ class ThousandMatch(
         points: IntArray,
         tricks: IntArray,
         raspised: Int? = null,
+        /** У кого к началу розыгрыша были на руке все четыре туза. */
+        allAces: List<Int> = emptyList(),
     ): RoundSummary {
         check(winner == null) { "матч уже выигран" }
         roundsPlayed++
+
+        // Тузовый марьяж — договорённость сторон: четыре туза на руке и хотя
+        // бы одна взятка дают 200. Считается здесь, а не в коне, потому что
+        // 200 — это очки кона: они идут заказчику в заказ, а защитнику в его
+        // округлённую запись, и от них же зависит, выполнен ли заказ.
+        //
+        // Расписанный кон очков не приносит никому, и марьяж тут не исключение.
+        val roundPoints = points.copyOf()
+        val aceMarried = mutableListOf<Int>()
+        if (rules.aceMarriage && raspised == null) {
+            for (seat in 0 until playerCount) {
+                if (seat !in allAces || tricks[seat] <= 0) continue
+                roundPoints[seat] += ACE_MARRIAGE_POINTS
+                aceMarried += seat
+            }
+        }
 
         val deltas = IntArray(playerCount)
         val bolted = mutableListOf<Int>()
@@ -124,7 +157,7 @@ class ThousandMatch(
         // Расписанный кон заказа не выполняет по определению: заказчик от
         // него отказался. Иначе роспись на бочке с уже набранными очками
         // засчиталась бы победой.
-        val madeIt = raspised == null && points[declarer] >= bid
+        val madeIt = raspised == null && roundPoints[declarer] >= bid
         var sat: Int? = null
 
         // Бочка очков не пишет, пока не одолеет свой заказ. Одолела — матч
@@ -165,7 +198,7 @@ class ThousandMatch(
                         if (seat == declarer) -bid else ThousandRound.raspisShare(bid)
 
                     seat == declarer -> if (madeIt) bid else -bid
-                    else -> (points[seat] + 2) / 5 * 5
+                    else -> (roundPoints[seat] + 2) / 5 * 5
                 }
                 deltas[seat] = delta
                 scores[seat] += delta
@@ -250,6 +283,7 @@ class ThousandMatch(
 
         return RoundSummary(
             deltas = deltas.toList(),
+            points = roundPoints.toList(),
             bolted = bolted,
             barrelsDropped = dropped,
             barrelSat = sat,
@@ -257,6 +291,7 @@ class ThousandMatch(
             raspised = raspised,
             samosvaled = samosvaled.toList(),
             raspisPenalised = raspisPenalised,
+            aceMarried = aceMarried.toList(),
         )
     }
 

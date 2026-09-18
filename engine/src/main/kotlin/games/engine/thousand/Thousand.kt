@@ -63,6 +63,9 @@ fun marriagePoints(suit: Suit): Int = when (suit) {
     Suit.HEARTS -> 100
 }
 
+/** Сколько тузов в колоде. Их все на одной руке — тузовый марьяж. */
+const val ACE_COUNT = 4
+
 /** Король и дама одной масти на руках — то есть марьяж можно объявить. */
 fun List<Card>.hasMarriage(suit: Suit): Boolean =
     any { it.rank == Rank.KING && it.suit == suit } && any { it.rank == Rank.QUEEN && it.suit == suit }
@@ -159,6 +162,16 @@ class ThousandRound private constructor(
     private val trickPoints = IntArray(playerCount)
     private val marriage = IntArray(playerCount)
     private val tricks = IntArray(playerCount)
+
+    /**
+     * У кого на руке все четыре туза к началу розыгрыша — тузовый марьяж.
+     *
+     * Считается один раз, когда снос лёг и карты больше не меняются: после
+     * этого тузы уходят во взятки по одному, и «на руке» уже не проверить.
+     * Договорённость это или нет, решает матч — кон только помнит, у кого
+     * тузы были (см. [ThousandMatch]).
+     */
+    private val allAces = BooleanArray(playerCount)
     private val currentTrick = mutableListOf<Pair<Int, Card>>()
     private val playedTricks = mutableListOf<Trick>()
 
@@ -169,6 +182,9 @@ class ThousandRound private constructor(
     fun marriagePointsOf(seat: Int): Int = marriage[seat]
 
     fun tricksOf(seat: Int): Int = tricks[seat]
+
+    /** Были ли у места все четыре туза к началу розыгрыша. */
+    fun hadAllAces(seat: Int): Boolean = allAces[seat]
 
     fun handOf(seat: Int): List<Card> = hands[seat].toList()
 
@@ -317,6 +333,11 @@ class ThousandRound private constructor(
                     hands[receiver[index]] += card
                 }
                 phase = Phase.PLAY
+                // Карты больше не меняются: у кого четыре туза на руке, тот
+                // и тузовый марьяж — и это видно ровно сейчас.
+                for (s in 0 until playerCount) {
+                    allAces[s] = hands[s].count { it.rank == Rank.ACE } == ACE_COUNT
+                }
                 // Заказчик ходит первым.
                 turnSeat = seat
             }
@@ -603,6 +624,7 @@ class ThousandRound private constructor(
             table: List<Pair<Int, Card>>,
             barrelSeat: Int?,
             raspised: Int? = null,
+            allAces: Set<Int> = emptySet(),
         ): ThousandRound {
             val round = ThousandRound(
                 hands = hands.map { it.toMutableList() }.toMutableList(),
@@ -622,6 +644,9 @@ class ThousandRound private constructor(
             trickPoints.forEachIndexed { seat, value -> round.trickPoints[seat] = value }
             marriage.forEachIndexed { seat, value -> round.marriage[seat] = value }
             tricks.forEachIndexed { seat, value -> round.tricks[seat] = value }
+            // Тузы, ушедшие во взятки, на руке уже не найти — поэтому и
+            // хранится признак, а не сами карты.
+            allAces.forEach { round.allAces[it] = true }
             round.currentTrick += table
             return round
         }
