@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -32,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -722,8 +724,23 @@ private fun GameSettingRow(
 ) {
     var value by remember(setting.key) { mutableStateOf(store.value(setting)) }
     Row(
+        // Переключатель и подпись — один элемент для скринридера, а не два.
+        // Без этого TalkBack читает название с пояснением, а следом отдельно
+        // «переключатель, выключено» без имени: два разных объекта там, где
+        // для игрока за столом один. toggleable на самой строке заодно делает
+        // переключателем всю строку целиком, а не маленький ромб справа, —
+        // незрячему попасть по строке во всю ширину заметно проще.
         modifier = Modifier
             .fillMaxWidth()
+            .toggleable(
+                value = value,
+                role = Role.Switch,
+                onValueChange = { next ->
+                    value = next
+                    store.set(setting, next)
+                    onAnnounce(gameSettingPhrase(setting, next))
+                },
+            )
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -732,27 +749,28 @@ private fun GameSettingRow(
             Text(setting.title, style = MaterialTheme.typography.bodyLarge)
             Text(setting.about, style = MaterialTheme.typography.bodyMedium)
         }
-        Switch(
-            checked = value,
-            onCheckedChange = { next ->
-                value = next
-                store.set(setting, next)
-                onAnnounce(gameSettingPhrase(setting, next))
-            },
-        )
+        // onCheckedChange = null: переключает строка, а сам ромб — только
+        // картинка. Иначе он забирает нажатие себе и снова становится
+        // вторым элементом в дереве доступности.
+        Switch(checked = value, onCheckedChange = null)
     }
 }
 
 @Composable
 private fun SettingSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
+        // То же, что в строке игровой настройки: подпись и переключатель —
+        // один элемент, и переключает вся строка. Здесь это заметнее: у
+        // общей настройки подписи в две-три строки хватает, а рядом с ней
+        // ромб в четыре миллиметра.
         modifier = Modifier
             .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
