@@ -46,6 +46,7 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
+import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.TableCards
@@ -600,8 +601,7 @@ fun ThousandScreen(
         }
         cursor = next
         val card = hand[next]
-        val fits = if (card in playable) "подходит" else "не подходит"
-        voice.say("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
+        voice.say("${next + 1} из ${hand.size}: ${card.spoken()}${cardVerdict(card, playable)}.")
     }
 
     Column(
