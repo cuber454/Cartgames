@@ -256,4 +256,32 @@ class KozelRoundTest {
             "ход чужого места должен быть отвергнут",
         )
     }
+
+    @Test
+    fun `начинающий обязан открыть раунд своим младшим дублем`() {
+        val round = roundOf(
+            hands = listOf(listOf(tile(5, 5), tile(6, 3)), listOf(tile(1, 1), tile(2, 4))),
+            turn = 0,
+        )
+
+        // Ход ровно один: младший дубль своей руки. У супротивника дубль
+        // младше, но сейчас не его ход — правило смотрит на свою руку.
+        assertEquals(listOf(KozelMove.Place(tile(5, 5), End.LEFT)), round.legalMoves(0))
+
+        round.apply(0, KozelMove.Place(tile(5, 5), End.LEFT))
+        assertEquals(5, round.table.left)
+        assertEquals(5, round.table.right)
+    }
+
+    @Test
+    fun `без дублей на руке раунд открывают любой костью`() {
+        val round = roundOf(
+            hands = listOf(listOf(tile(4, 4)), listOf(tile(6, 2), tile(5, 4))),
+            turn = 1,
+        )
+
+        // Линия пуста, ход у места без дублей: открывать нечем — ход свободен.
+        assertEquals(2, round.legalMoves(1).size)
+        assertTrue(round.legalMoves(1).all { it is KozelMove.Place })
+    }
 }

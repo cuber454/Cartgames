@@ -163,4 +163,42 @@ class KozelRulesTest {
         assertTrue(moves.contains(KozelMove.Place(tile(1, 1), End.RIGHT)))
         assertTrue(moves.contains(KozelMove.PlaceBoth(tile(4, 4), tile(1, 1))))
     }
+
+    @Test
+    fun `пустую линию открывают младшим дублем — и только им`() {
+        val hand = listOf(tile(4, 4), tile(5, 6), tile(1, 2))
+
+        val moves = Line.EMPTY.movesFor(hand, bazaarSize = 14)
+
+        // Ход один: ни взять из базара, ни положить что-то другое нельзя.
+        assertEquals(listOf(KozelMove.Place(tile(4, 4), End.LEFT)), moves)
+    }
+
+    @Test
+    fun `младший дубль из двух — тот, что меньше числом`() {
+        val hand = listOf(tile(5, 5), tile(1, 1), tile(6, 3))
+
+        assertEquals(listOf(KozelMove.Place(tile(1, 1), End.LEFT)), Line.EMPTY.movesFor(hand, 0))
+    }
+
+    @Test
+    fun `дублей нет ни у кого — первый ход свободен`() {
+        val hand = listOf(tile(5, 6), tile(3, 2))
+
+        val moves = Line.EMPTY.movesFor(hand, bazaarSize = 0)
+
+        assertEquals(2, moves.size)
+        assertTrue(moves.contains(KozelMove.Place(tile(5, 6), End.LEFT)))
+    }
+
+    @Test
+    fun `правило первого хода кончается вместе с пустой линией`() {
+        // Дубль 4-4 на руке, но линия уже начата: ходят тем, что подходит,
+        // и дубль здесь — не обязанность, а один из ходов.
+        val hand = listOf(tile(4, 4), tile(5, 6))
+
+        val moves = lineWithEnds(4, 6).movesFor(hand, bazaarSize = 0)
+
+        assertTrue(moves.contains(KozelMove.Place(tile(5, 6), End.RIGHT)))
+    }
 }
