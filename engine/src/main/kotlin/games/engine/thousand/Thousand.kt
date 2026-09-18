@@ -104,6 +104,17 @@ sealed interface ThousandMove : Move {
      */
     data object Raspis : ThousandMove
 
+    /**
+     * Золотой кон — договорённость сторон: кон играется **без торга**, сразу
+     * на весь заказ, и очки за него двойные (см. `THOUSAND.md`, 2.14).
+     *
+     * Объявить его можно вместо первой ставки и только с рукой, которая
+     * заказанное уже держит: золотой кон — не ставка вслепую, а признание
+     * того, что карты пришли сами. Прикуп при нём не берут вовсе — вся
+     * прелесть в том, что и без прикупа есть чем играть.
+     */
+    data object Golden : ThousandMove
+
     /** Положить карту в взятку. */
     data class Play(val card: Card) : ThousandMove
 }
@@ -129,6 +140,12 @@ class ThousandRound private constructor(
      * прикупа в розыгрыше не участвуют.
      */
     private val barrelBid: Int = MAX_BID,
+    /**
+     * Можно ли в этом коне объявить золотой кон — договорённость сторон.
+     * Кон о ней только спрашивает; решает матч, он же и держит флаг
+     * ([ThousandRules.golden]).
+     */
+    private val goldenAllowed: Boolean = false,
 ) : GameRules<ThousandRound> {
 
     val playerCount: Int get() = hands.size
@@ -153,6 +170,16 @@ class ThousandRound private constructor(
 
     /** Кто расписался. Расписаться может только заказчик, поэтому тут либо он, либо null. */
     var raspised: Int? = null
+        private set
+
+    /**
+     * Кон объявлен золотым: торга не было, прикуп не брали, очки двойные.
+     *
+     * Помнит это кон, а не матч: поднятая с диска партия должна доигрываться
+     * так же, как шла, — и не только в счёте, но и в том, сколько карт у
+     * заказчика на руке.
+     */
+    var golden: Boolean = false
         private set
 
     private val passed = BooleanArray(playerCount)
@@ -185,6 +212,18 @@ class ThousandRound private constructor(
 
     /** Были ли у места все четыре туза к началу розыгрыша. */
     fun hadAllAces(seat: Int): Boolean = allAces[seat]
+
+    /**
+     * Сколько стоит рука до торга: очки карт и марьяжи, которые на ней уже
+     * собраны.
+     *
+     * Не то же самое, что [roundPoints]: тот считает взятое и объявленное, а
+     * тут — то, что видно в руке. Нужно ровно для одного: золотой кон
+     * объявляют с рукой, которая заказ держит, а не с надеждой его взять.
+     */
+    fun handValue(seat: Int): Int =
+        hands[seat].sumOf { it.points } +
+            Suit.entries.filter { hands[seat].hasMarriage(it) }.sumOf { marriagePoints(it) }
 
     fun handOf(seat: Int): List<Card> = hands[seat].toList()
 
@@ -244,6 +283,11 @@ class ThousandRound private constructor(
                     maxOf(currentBid + BID_STEP, MIN_BID)
                 }
                 if (currentBid == 0) {
+                    // Золотой кон — вместо первой ставки, а не после неё:
+                    // он и значит «без торга». Рука при этом должна держать
+                    // заказ уже сейчас — иначе это не золотой кон, а блеф,
+                    // которого правила не знают.
+                    if (goldenAllowed && handValue(seat) >= GOLDEN_BID) add(ThousandMove.Golden)
                     add(ThousandMove.Bid(floor))
                 } else {
                     var next = floor
@@ -333,12 +377,20 @@ class ThousandRound private constructor(
                     hands[receiver[index]] += card
                 }
                 phase = Phase.PLAY
-                // Карты больше не меняются: у кого четыре туза на руке, тот
-                // и тузовый марьяж — и это видно ровно сейчас.
-                for (s in 0 until playerCount) {
-                    allAces[s] = hands[s].count { it.rank == Rank.ACE } == ACE_COUNT
-                }
+                captureAces()
                 // Заказчик ходит первым.
+                turnSeat = seat
+            }
+
+            // Золотой кон: торг не начинается вовсе, прикуп не берут, сноса
+            // нет — карты у всех те же, что сданы. Играется сразу на весь
+            // заказ, и заказчиком становится объявивший.
+            ThousandMove.Golden -> {
+                golden = true
+                declarer = seat
+                currentBid = GOLDEN_BID
+                phase = Phase.PLAY
+                captureAces()
                 turnSeat = seat
             }
 
@@ -362,6 +414,17 @@ class ThousandRound private constructor(
                 raspised = seat
                 phase = Phase.OVER
             }
+        }
+    }
+
+    /**
+     * Запомнить, у кого на руке все четыре туза. Считается в тот момент,
+     * когда карты перестали меняться и розыгрыш начался: дальше тузы уходят
+     * во взятки по одному, и «на руке» уже не проверить.
+     */
+    private fun captureAces() {
+        for (s in 0 until playerCount) {
+            allAces[s] = hands[s].count { it.rank == Rank.ACE } == ACE_COUNT
         }
     }
 
@@ -464,6 +527,7 @@ class ThousandRound private constructor(
         is ThousandMove.TakePrikups -> "Прикуп взят."
         is ThousandMove.Discard -> "Снос: ${move.cards.joinToString(", ") { it.spoken() }}."
         is ThousandMove.Praise -> "Хвалю ${move.card.suit.spoken}."
+        ThousandMove.Golden -> "Золотой кон: без торга, заказ $GOLDEN_BID."
         ThousandMove.Raspis -> "Роспись: заказ не играется."
         is ThousandMove.Play -> "Сыграна ${move.card.spoken()}."
         else -> "Ход сделан."
@@ -492,6 +556,13 @@ class ThousandRound private constructor(
         const val MIN_BID = 100
         const val MAX_BID = 120
         const val BID_STEP = 5
+
+        /**
+         * Заказ золотого кона: он играется сразу на весь заказ, минуя торг.
+         * Столько же, сколько и потолок торга, — золотой кон не про сумму,
+         * а про то, что её не называют.
+         */
+        const val GOLDEN_BID = MAX_BID
 
         /** Сколько очков в колоде: вся она, до последней девятки. */
         const val TOTAL_POINTS = 120
@@ -557,6 +628,7 @@ class ThousandRound private constructor(
             playerCount: Int = 2,
             firstBidder: Int = 0,
             barrelSeat: Int? = null,
+            goldenAllowed: Boolean = false,
         ): ThousandRound {
             require(playerCount in 2..3) { "«Тысяча» бывает на двоих или на троих" }
 
@@ -576,6 +648,7 @@ class ThousandRound private constructor(
                 turnSeat = firstBidder,
                 barrelSeat = barrelSeat,
                 barrelBid = barrelBid(playerCount),
+                goldenAllowed = goldenAllowed,
             )
         }
 
@@ -625,6 +698,7 @@ class ThousandRound private constructor(
             barrelSeat: Int?,
             raspised: Int? = null,
             allAces: Set<Int> = emptySet(),
+            golden: Boolean = false,
         ): ThousandRound {
             val round = ThousandRound(
                 hands = hands.map { it.toMutableList() }.toMutableList(),
@@ -639,6 +713,9 @@ class ThousandRound private constructor(
             round.declarer = declarer
             round.trumpSuit = trumpSuit
             round.raspised = raspised
+            // Договорённость поднятой партии не переспрашивают: раз кон
+            // игрался золотым, он им и доигрывается.
+            round.golden = golden
             passed.forEach { round.passed[it] = true }
             named.forEach { round.namedBid[it] = true }
             trickPoints.forEachIndexed { seat, value -> round.trickPoints[seat] = value }
@@ -657,6 +734,7 @@ class ThousandRound private constructor(
             prikups: List<List<Card>> = listOf(emptyList()),
             firstBidder: Int = 0,
             barrelSeat: Int? = null,
+            goldenAllowed: Boolean = false,
         ): ThousandRound = ThousandRound(
             hands = hands.map { it.toMutableList() }.toMutableList(),
             prikups = prikups,
@@ -664,6 +742,7 @@ class ThousandRound private constructor(
             turnSeat = firstBidder,
             barrelSeat = barrelSeat,
             barrelBid = barrelBid(hands.size),
+            goldenAllowed = goldenAllowed,
         )
     }
 }

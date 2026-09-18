@@ -42,10 +42,10 @@ object ThousandBot {
         val moves = round.legalMoves(seat)
         if (moves.isEmpty()) return null
 
-        // Новичок играет картами, а не сдаётся: роспись — решение на счёт
-        // партии, и случайным ходом её выбирать нечего.
+        // Новичок играет картами, а не сдаётся: роспись и золотой кон —
+        // решения на счёт партии, и случайным ходом их выбирать нечего.
         if (difficulty == Difficulty.NOVICE) {
-            val cards = moves.filterNot { it == ThousandMove.Raspis }
+            val cards = moves.filterNot { it == ThousandMove.Raspis || it == ThousandMove.Golden }
             val pool = cards.ifEmpty { moves }
             return pool[random.nextInt(pool.size)]
         }
@@ -123,6 +123,11 @@ object ThousandBot {
         difficulty: Difficulty,
         random: Random,
     ): ThousandMove {
+        // Золотой кон движок предлагает только тогда, когда рука заказ уже
+        // держит, — гадать тут не о чем, и бот его берёт. Сам он его не
+        // выдумывает: нет хода в списке — нет и разговора.
+        if (moves.contains(ThousandMove.Golden)) return ThousandMove.Golden
+
         val bids = moves.filterIsInstance<ThousandMove.Bid>()
         if (bids.isEmpty()) return ThousandMove.Pass
 

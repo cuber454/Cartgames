@@ -139,6 +139,9 @@ fun ThousandScreen(
     // Открыт ли вопрос «расписаться?» — роспись кончает кон и спрашивается
     // отдельно: промахнуться по ней пальцем не должно быть накладно.
     var raspisOpen by remember { mutableStateOf(false) }
+    // Открыт ли вопрос о золотом коне: он стоит вдвое дороже обычного кона
+    // и берётся на всю партию, поэтому спрашивается подтверждением.
+    var goldenOpen by remember { mutableStateOf(false) }
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
@@ -310,6 +313,7 @@ fun ThousandScreen(
             .forEach { parts += "похвалить ${it.card.suit.spoken}" }
         if (moves.contains(ThousandMove.Pass)) parts += "пас"
         if (moves.contains(ThousandMove.Raspis)) parts += "расписаться"
+        if (moves.contains(ThousandMove.Golden)) parts += "объявить золотой кон"
         return "Можно: " + parts.joinToString(", ") + "."
     }
 
@@ -435,11 +439,21 @@ fun ThousandScreen(
 
     val info = buildString {
         append("Кон ${match.roundsPlayed + 1}.")
+        // Золотой кон выбивается из всего, что игрок привык слышать за
+        // столом: без торга, без прикупа, за двойные очки. Молчать об этом
+        // нельзя — по одним картам этого не слышно.
+        if (round.golden) append(" Золотой кон: заказ 120, очки двойные.")
         // Козырь в «Тысяче» — масть объявленного марьяжа: до первого
         // объявления его попросту нет, и молчать об этом честнее, чем
         // называть козырем что-то одно.
         round.trumpSuit?.let { append(" Козырь — ${it.spoken}.") }
         append(" Счёт: ты ${match.scores[PLAYER]}, бот ${match.scores[BOT]}.")
+        // Сложить руку в уме до ста двадцати — работа, которой за столом
+        // никто не делает: зрячий видит это с одного взгляда, а на слух надо
+        // пересчитать всю руку. Поэтому говорим прямо, когда объявить можно.
+        if (moves.contains(ThousandMove.Golden)) {
+            append(" Рука держит заказ — можно объявить золотой кон.")
+        }
         if (match.barrelSeat == PLAYER) append(" Ты на бочке.")
         if (match.barrelSeat == BOT) append(" Бот на бочке.")
         if (round.phase == Phase.PLAY) {
@@ -594,6 +608,16 @@ fun ThousandScreen(
                     }
                     Spacer(Modifier.height(8.dp))
                 }
+                // Золотой кон стоит рядом с суммами, а не вместо них: выбор
+                // «назвать сто или объявить золотой» — один и тот же выбор,
+                // и прятать вторую половину в другой экран незачем.
+                if (moves.contains(ThousandMove.Golden)) {
+                    Button(
+                        onClick = { goldenOpen = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Золотой кон") }
+                    Spacer(Modifier.height(8.dp))
+                }
             }
 
             prikups.isNotEmpty() -> {
@@ -625,6 +649,34 @@ fun ThousandScreen(
                 Text("Пас")
             }
             Spacer(Modifier.height(8.dp))
+        }
+
+        // Золотой кон — тоже вопрос, а не ход: он берётся на всю партию, и
+        // промахнуться по нему пальцем дорого. Цифры называем прямо: без них
+        // «золотой кон» звучит красиво и не значит ничего.
+        if (goldenOpen) {
+            AlertDialog(
+                onDismissRequest = { goldenOpen = false },
+                title = { Text("Золотой кон?") },
+                text = {
+                    Text(
+                        "Торга не будет: ты играешь заказ 120 тем, что сдано, — прикуп не берёшь. " +
+                            "Выполнишь — плюс 240, не выполнишь — минус 240. Болт в золотом коне " +
+                            "считается за два.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            goldenOpen = false
+                            play(ThousandMove.Golden)
+                        },
+                    ) { Text("Объявляю") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { goldenOpen = false }) { Text("Торгуюсь") }
+                },
+            )
         }
 
         // Роспись стоит отдельно от «Паса» и спрашивается подтверждением:
@@ -745,6 +797,7 @@ private fun botPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
         else "Бот берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Бот снёс карту."
     is ThousandMove.Praise -> "Бот хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    ThousandMove.Golden -> "Бот объявляет золотой кон: заказ 120, очки двойные."
     ThousandMove.Raspis -> "Бот расписывается."
     is ThousandMove.Play -> "Бот кладёт ${move.card.spoken()}."
 }
@@ -758,6 +811,7 @@ private fun ownPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
         else "Берёшь прикуп ${move.index + 1}: ${prikup.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Discard -> "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
     is ThousandMove.Praise -> "Хвалишь ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    ThousandMove.Golden -> "Объявляешь золотой кон: заказ 120, прикуп не берёшь, очки двойные."
     ThousandMove.Raspis -> "Расписываешься."
     is ThousandMove.Play -> "Кладёшь ${move.card.spoken()}."
 }
@@ -786,6 +840,10 @@ private fun resumePhrase(round: ThousandRound, match: ThousandMatch): String {
         Phase.OVER -> "Кон окончен."
     }
     val trump = round.trumpSuit?.let { " Козырь — ${it.spoken}." } ?: ""
+    // Золотой кон поднятой партии называют первым делом: без торга и без
+    // прикупа он и так выбивается из привычного хода кона, но заметить это
+    // по одному лишь «розыгрыш» невозможно.
+    val golden = if (round.golden) " Золотой кон: заказ 120, очки двойные." else ""
     // Тузы напоминаем и здесь: поднятая партия — та, где игрок помнит о
     // столе меньше всего, а четыре туза на руке он мог и не заметить.
     val aces = if (match.rules.aceMarriage && round.hadAllAces(PLAYER)) {
@@ -794,7 +852,7 @@ private fun resumePhrase(round: ThousandRound, match: ThousandMatch): String {
         ""
     }
     val turn = if (round.turn == PLAYER) " Твой ход." else " Ход бота."
-    return "Продолжаем партию. $body$trump$aces " +
+    return "Продолжаем партию. $body$golden$trump$aces " +
         "Счёт: у тебя ${match.scores[PLAYER]}, у бота ${match.scores[BOT]}.$turn"
 }
 
@@ -831,6 +889,8 @@ private fun roundPhrase(
     // Тузовый марьяж — договорённость сторон, и в очках кона выше он уже
     // сидит. Называем его отдельно: без этого «набрал 300» на ста взятках
     // звучит как ошибка счёта.
+    if (summary.golden) parts += "Золотой кон: очки за него двойные."
+
     summary.aceMarried.forEach {
         parts += if (it == PLAYER) {
             "Тузовый марьяж: четыре туза и взятка — плюс 200."

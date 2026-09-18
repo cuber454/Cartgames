@@ -23,17 +23,17 @@ import games.engine.Suit
 object ThousandSave {
 
     /** Версия формата. Меняется вместе с составом полей. */
-    const val FORMAT = 3
+    const val FORMAT = 4
 
     /**
      * Записи какой давности ещё читаются.
      *
      * Версия 2 добавила договорённости сторон и счётчик росписей, версия 3 —
-     * тузовый марьяж и признак того, у кого тузы на руке. Каждая из этих
-     * строк в старой записи означает ровно то же, что и умолчание: партия,
-     * начатая по книге, с нулём росписей и без тузового марьяжа. Поэтому
-     * записи версий 1 и 2 читаются без потерь, и брошенная партия после
-     * обновления не пропадает.
+     * тузовый марьяж и признак того, у кого тузы на руке, версия 4 — признак
+     * золотого кона. Каждая из этих строк в старой записи означает ровно то
+     * же, что и умолчание: партия, начатая по книге, с нулём росписей, без
+     * тузового марьяжа и с обычным коном. Поэтому записи версий 1–3 читаются
+     * без потерь, и брошенная партия после обновления не пропадает.
      */
     private val READABLE_FORMATS = 1..FORMAT
 
@@ -71,6 +71,10 @@ object ThousandSave {
         appendLine("first ${round.firstBidderSeat()}")
         appendLine("bid ${round.currentBid}")
         appendLine("declarer ${round.declarer?.toString() ?: DASH}")
+        // Золотой кон — свойство кона, а не договорённость партии: он либо
+        // объявлен в этом коне, либо нет. Настройка говорит лишь о том,
+        // можно ли было его объявить.
+        appendLine("golden ${if (round.golden) 1 else 0}")
         appendLine("raspis ${round.raspised?.toString() ?: DASH}")
         appendLine("trump ${round.trumpSuit?.let(::letterOf) ?: DASH}")
         appendLine("passed ${round.passedSeats().joinToString(" ")}")
@@ -177,6 +181,7 @@ object ThousandSave {
         if (first !in 0 until playerCount) return null
         val bid = fields["bid"]?.toIntOrNull() ?: return null
         val declarer = parseIntOrNull(fields["declarer"])
+        val golden = fields["golden"]?.let { it == "1" } ?: false
         val raspised = parseIntOrNull(fields["raspis"])?.takeIf { it in 0 until playerCount }
         val trump = parseSuitOrNull(fields["trump"])
         val barrel = parseIntOrNull(fields["barrel"])
@@ -209,6 +214,7 @@ object ThousandSave {
             barrelSeat = barrel,
             raspised = raspised,
             allAces = allAces,
+            golden = golden,
         )
 
         val match = ThousandMatch.restore(
