@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.speech.spokenVerdict
 import games.engine.Card as EngineCard
 
 /**
@@ -32,11 +33,17 @@ import games.engine.Card as EngineCard
  * [selected] — карта, до которой игрок дошёл жестом и которую сейчас
  * слышит. Отмечена рамкой, а не только голосом: карту называет речь, но
  * тому, кто видит экран плохо, нужно ещё и видеть, где он остановился.
+ *
+ * [playable] — не «можно ли сыграть эту карту», а вердикт целиком:
+ * `null` — решать сейчас не из чего (нет игры, не наш ход, торг), и тогда
+ * ни слова вердикта, ни приглушения нет. Раньше на экране без партии все
+ * карты разом читались как «не подходит», хотя не подходить там было нечему
+ * (Катерина, 18.09).
  */
 @Composable
 fun HandCard(
     card: EngineCard,
-    playable: Boolean,
+    playable: Boolean?,
     cardWidth: Dp,
     cardHeight: Dp,
     largeText: Boolean,
@@ -47,7 +54,7 @@ fun HandCard(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .alpha(if (playable) 1f else 0.45f)
+            .alpha(if (playable != false) 1f else 0.45f)
             .then(
                 if (selected) {
                     Modifier.border(
@@ -71,8 +78,9 @@ fun HandCard(
             Text(
                 // Неиграбельную карту помечаем словами, а не только
                 // бледным цветом: цветом сыт не будешь, если играешь
-                // на слух, а так понятно, что жать нечего.
-                text = if (playable) card.spoken() else card.spoken() + " — не подходит",
+                // на слух, а так понятно, что жать нечего. Слова те же,
+                // что и на свайпе по руке — их даёт [spokenVerdict].
+                text = card.spoken() + spokenVerdict(playable),
                 textAlign = TextAlign.Center,
                 maxLines = 3,
                 style = if (largeText) {

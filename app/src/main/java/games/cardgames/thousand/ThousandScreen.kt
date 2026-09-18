@@ -47,6 +47,7 @@ import games.cardgames.speech.Speaker
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.cardVerdict
+import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.TableCards
@@ -656,7 +657,7 @@ fun ThousandScreen(
                 itemsIndexed(hand) { index, card ->
                     HandCard(
                         card = card,
-                        playable = card in playable,
+                        playable = verdictOf(card, playable),
                         cardWidth = cardWidth,
                         cardHeight = cardHeight,
                         largeText = settings.largeText,
