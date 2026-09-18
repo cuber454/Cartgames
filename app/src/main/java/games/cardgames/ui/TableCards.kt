@@ -3,10 +3,12 @@ package games.cardgames.ui
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -51,6 +53,38 @@ fun TableCards(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         cards.forEach { CardFace(it, width = cardWidth, height = cardHeight) }
+    }
+}
+
+/**
+ * Стопка закрытых карт — прикуп, который ещё не открывали.
+ *
+ * Карты в стопке сдвинуты на пару точек: одна рубашка не говорит, сколько
+ * под ней лежит, а тут их две, и это единственное, что про прикуп известно,
+ * пока его не взяли. Стопка молчит для скринридера: вслух про прикуп
+ * говорит кнопка рядом, и говорит ровно то же — сколько и куда.
+ */
+@Composable
+fun CardStack(
+    count: Int,
+    cardWidth: Dp,
+    cardHeight: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val shift = 6.dp
+    val steps = (count - 1).coerceAtLeast(0)
+    Box(
+        modifier = modifier
+            .size(cardWidth + shift * steps, cardHeight + shift * steps)
+            .clearAndSetSemantics {},
+    ) {
+        repeat(count) { index ->
+            CardBack(
+                width = cardWidth,
+                height = cardHeight,
+                modifier = Modifier.offset(x = shift * index, y = shift * index),
+            )
+        }
     }
 }
 

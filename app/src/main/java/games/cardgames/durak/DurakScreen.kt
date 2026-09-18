@@ -48,6 +48,7 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
+import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
@@ -337,6 +338,11 @@ fun DurakScreen(
             (!settings.botTalk || botCards > 1)
         ) {
             voice.say("На столе: ${game.spokenTable()}. Твой ход.")
+        } else if (played && !game.finished && game.legalMoves(PLAYER).isNotEmpty()) {
+            // Стол пуст или бот положил одну карту и про неё уже сказал —
+            // называть нечего, а «твой ход» нужен всегда: без него игрок
+            // ждёт, пока заговорит бот, которого уже никто не ждёт.
+            voice.say(TURN_PHRASE)
         }
         if (played) session.tick++
     }

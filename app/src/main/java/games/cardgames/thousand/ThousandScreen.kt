@@ -46,10 +46,12 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.appSpeaks
+import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
 import games.cardgames.ui.HandCard
+import games.cardgames.ui.CardStack
 import games.cardgames.ui.TableCards
 import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
@@ -437,6 +439,12 @@ fun ThousandScreen(
         if (played && round.turn == PLAYER && round.phase != Phase.OVER) {
             if (settings.vibration) vibrations.tap()
             if (settings.signals) sounds.turn()
+            // И словами. Толчок слышно не всегда, а молчание после хода бота
+            // не отличить от «приложение задумалось»: игрок сидит и ждёт,
+            // пока заговорит бот, которого уже никто не ждёт. Сначала
+            // дослушиваем этого бота — своя фраза его перебивать не должна.
+            delay(voice.waitMs())
+            voice.say(TURN_PHRASE)
         }
 
         // Хвалить автоматически: договорённость включена — объявляем марьяж
@@ -566,10 +574,13 @@ fun ThousandScreen(
     // Порядок карт — тот, что выбран в настройках; старшинство тут своё
     // (десятка выше короля), поэтому и сортировка своя, из движка.
     val hand = orderHand(round.handOf(PLAYER), settings.order, round.trumpSuit)
+    // Карты, которыми ход и вправду можно сделать. Сноса тут нет намеренно:
+    // снести можно любую карту, и «подходит» на сносе — ответ не на тот
+    // вопрос. Вердикт отвечает на «чем мне ходить», а не на «что отдать».
     val playable: Set<EngineCard> = moves.mapNotNull { move ->
         when (move) {
             is ThousandMove.Play -> move.card
-            is ThousandMove.Discard -> move.cards.firstOrNull()
+            is ThousandMove.Praise -> move.card
             else -> null
         }
     }.toSet()
@@ -711,16 +722,28 @@ fun ThousandScreen(
             }
 
             prikups.isNotEmpty() -> {
-                // Прикупы стоят в ряд, а не один под другим: их выбирают
-                // между собой, и «левый или правый» — это и есть выбор.
-                // Столбиком они читались как два шага подряд, а не как два
-                // равных предложения (Катерина, 18.09).
+                // Прикупы стоят в ряд, а не один под другим, и каждый
+                // нарисован стопкой рубашкой вниз: их выбирают между собой,
+                // и «левый или правый» — это и есть выбор. Столбиком кнопки
+                // читались как два шага подряд, а не как два равных
+                // предложения (Катерина, 18.09).
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     prikups.forEach { take ->
-                        Button(
-                            onClick = { play(take) },
+                        Column(
                             modifier = Modifier.weight(1f),
-                        ) { Text("Взять прикуп ${take.index + 1}") }
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CardStack(
+                                count = round.prikup(take.index).size,
+                                cardWidth = tableWidth,
+                                cardHeight = tableHeight,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Button(
+                                onClick = { play(take) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Взять прикуп ${take.index + 1}") }
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
