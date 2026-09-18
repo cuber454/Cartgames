@@ -6,7 +6,7 @@ import games.engine.kozel.KozelMove
 import kotlin.random.Random
 
 /** Повод для реплики: от него зависит набор зачинов. */
-private enum class Reason { FIRST, ADD, LAST, DRAW, PASS }
+private enum class Reason { FIRST, ADD, LAST, BOTH, DRAW, PASS }
 
 /**
  * Зачины. Реплика собирается всегда одинаково — «зачин: кость и куда» — и это
@@ -20,6 +20,8 @@ private val PHRASES: Map<Reason, List<String>> = mapOf(
     Reason.ADD to listOf("Кладу", "Приставляю", "Вот", "Держи", "Добавляю"),
     // Это его последняя кость — сейчас выйдет.
     Reason.LAST to listOf("Последняя", "Всё, последняя", "Это последняя"),
+    // Оба дубля разом: ход, который за столом бывает не каждый раунд.
+    Reason.BOTH to listOf("Обе разом", "Кладу обе", "Двойной", "Ставлю обе"),
     // Базар закрыт для обоих: которое именно число вышло из игры, игрок
     // иначе не узнает вовсе.
     Reason.DRAW to listOf("Беру из базара", "Беру", "Тяну", "Гляну, что там"),
@@ -68,6 +70,13 @@ class KozelTalker(private val rng: Random = Random.Default) {
             // не значит: сторона появляется только у линии.
             val where = if (lineEmpty) "" else " ${move.end.title}"
             cardLine(reason, "${move.tile.spoken()}$where")
+        }
+
+        is KozelMove.PlaceBoth -> {
+            // Ход редкий и стол меняет вдвое сильнее обычного: две кости
+            // сразу. Молчать о нём нельзя, поэтому зачин у него свой и
+            // тишины, как в приставлении, здесь не бывает.
+            cardLine(Reason.BOTH, "${move.left.spoken()} и ${move.right.spoken()}")
         }
 
         KozelMove.Draw -> plainLine(Reason.DRAW)

@@ -2,6 +2,7 @@ package games.cardgames.kozel
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -53,6 +57,7 @@ import games.cardgames.speech.verdictOf
 import games.cardgames.ui.HandTile
 import games.cardgames.ui.TileFace
 import games.cardgames.ui.TableGesture
+import games.cardgames.ui.tableFeel
 import games.cardgames.ui.tableGestures
 import games.engine.kozel.End
 import games.engine.kozel.KozelBot
@@ -90,6 +95,16 @@ private const val LARGE_SCALE = 1.4f
  * смотрят мельком, а место нужно руке.
  */
 private const val TABLE_SCALE = 0.62f
+
+/**
+ * Промежуток между костями на столе. Он же — шаг, по которому палец находит
+ * кость под собой, поэтому задан здесь, а не в раскладке: линия и то, что
+ * под пальцем, обязаны считать его одинаково (см. `tableFeel`).
+ */
+private val TABLE_GAP = 4.dp
+
+/** Высота кости к её ширине: у стола кость вдвое длиннее, чем выше. */
+private const val TABLE_ASPECT = TILE_HEIGHT / TILE_WIDTH
 
 /**
  * Экран партии в «Козла».
@@ -165,8 +180,9 @@ fun KozelScreen(
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val tileWidth: Dp = (TILE_WIDTH * scale).dp
     val tileHeight: Dp = (TILE_HEIGHT * scale).dp
+    // Кость на столе — предел, а не размер: длинная линия ужимает кости
+    // сама, чтобы поместиться на экран (см. раскладку стола).
     val tableWidth: Dp = (TILE_WIDTH * TABLE_SCALE).dp
-    val tableHeight: Dp = (TILE_HEIGHT * TABLE_SCALE).dp
 
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
     val view = LocalView.current
@@ -206,6 +222,9 @@ fun KozelScreen(
         if (!settings.sounds) return
         when (move) {
             is KozelMove.Place -> sounds.card()
+            // Две кости разом — звук тот же: за столом их и слышно как один
+            // хлопок, а какая кость легла, скажет фраза.
+            is KozelMove.PlaceBoth -> sounds.card()
             KozelMove.Draw -> sounds.take()
             KozelMove.Pass -> sounds.card()
         }
@@ -216,6 +235,7 @@ fun KozelScreen(
         if (!settings.sounds) return 0L
         return when (move) {
             is KozelMove.Place -> TableSounds.CARD_MS
+            is KozelMove.PlaceBoth -> TableSounds.CARD_MS
             KozelMove.Draw -> TableSounds.TAKE_MS
             KozelMove.Pass -> TableSounds.CARD_MS
         }.toLong()
@@ -234,23 +254,33 @@ fun KozelScreen(
 
     /** Ход игрока: фраза, звук, толчок — в одном месте. */
     fun play(move: KozelMove) {
+        // Про пустой стол спрашиваем до хода: после него он уже не пустой,
+        // а «кладёшь шесть-шесть» и «кладёшь шесть-шесть слева» — разные
+        // слова, и выбираются они по состоянию до хода.
         val lineWasEmpty = session.match.round.table.isEmpty
-        val phrase = ownMovePhrase(move, lineWasEmpty)
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
         session.match.round.apply(PLAYER, move)
+        // А фразу собираем после: какую кость отдаст базар, до хода не знает
+        // никто — ни игрок, ни приложение, — и назвать её заранее нечем.
+        val phrase = ownMovePhrase(move, session.match.round, lineWasEmpty)
         // Свой ход звучит так же: сначала кость, потом слово.
         val gap = soundGap(move)
-        voice.sayOwnMove(phrase, afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L)
+        voice.sayOwnMove(
+            phrase,
+            afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
+            // Про базар скринридер не расскажет: он прочитал нажатую кнопку,
+            // а не то, что из базара пришло.
+            aloud = move is KozelMove.Draw,
+        )
         session.persist()
         session.tick++
     }
 
     fun playTile(tile: Tile) {
         val round = session.match.round
-        val moves = round.legalMoves(PLAYER)
-            .filterIsInstance<KozelMove.Place>()
-            .filter { it.tile == tile }
+        val legal = round.legalMoves(PLAYER)
+        val moves = legal.filterIsInstance<KozelMove.Place>().filter { it.tile == tile }
         if (moves.isEmpty()) {
             // Отказ — ответ на нажатие, а не событие за столом: игрок ждёт его
             // сразу, поэтому говорим своим голосом, даже когда за столом
@@ -258,11 +288,13 @@ fun KozelScreen(
             voice.sayRequested(refusalPhrase(round))
             return
         }
-        // Кость, подходящая к обоим концам, — единственный случай, когда
-        // решает не правило, а игрок. Единственную кость кладём сразу: лишний
-        // вопрос на ровном месте — лишний шаг для того, кто играет на слух.
+        // Два случая, когда решает не правило, а игрок: кость подходит к
+        // обоим концам, и дубль нашёл себе пару по другому концу. Только в
+        // них и спрашиваем: лишний вопрос на ровном месте — лишний шаг для
+        // того, кто играет на слух.
+        val both = bothWith(legal, tile)
         val only = moves.singleOrNull()
-        if (only != null) play(only) else endOpen = tile
+        if (only != null && both == null) play(only) else endOpen = tile
     }
 
     fun newMatch() {
@@ -431,10 +463,16 @@ fun KozelScreen(
         voice.say("${next + 1} из ${hand.size}: ${tile.spoken()}${tileVerdict(tile, playable)}.")
     }
 
+    // Где на экране лежит полоса стола. Жест вбок её обходит: по столу водят
+    // пальцем, чтобы ощупать кости, и листать ею руку заодно нельзя — игрок
+    // услышал бы сразу и кость, и чужую карту из своей руки. Пусто, пока
+    // стола на экране нет: тогда обходить нечего.
+    var tableBand by remember { mutableStateOf(Rect.Zero) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .tableGestures { gesture ->
+            .tableGestures(skip = { point -> tableBand.contains(point) }) { gesture ->
                 when (gesture) {
                     TableGesture.NEXT_CARD -> walkHand(1)
                     TableGesture.PREV_CARD -> walkHand(-1)
@@ -462,17 +500,51 @@ fun KozelScreen(
                     maxLines = 2,
                 )
                 // И та же линия костями: слова — скринридеру, кости — тому,
-                // кто за столом видит. Кость, повёрнутая как попало, разошлась
-                // бы с соседней, поэтому поворот берём у движка (Line.laid).
-                if (round.table.tiles.isNotEmpty()) {
+                // кто за столом видит, и они же — тому, кто щупает стол
+                // пальцем. Кость, повёрнутая как попало, разошлась бы с
+                // соседней, поэтому поворот берём у движка (Line.laid).
+                val laid = round.table.laid()
+                val tableTiles = round.table.tiles
+                if (laid.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.clearAndSetSemantics {},
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    // Клетки ровные и на всю ширину: кость не уезжает от
+                    // клетки, и палец, разделив ширину на число клеток,
+                    // находит ровно ту кость, под которой он лежит. Линия
+                    // от этого ещё и всегда помещается на экран целиком —
+                    // длинную щупать иначе было бы нечем.
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { tableBand = it.boundsInWindow() },
                     ) {
-                        round.table.laid().forEach { laid ->
-                            TileFace(laid.left, laid.right, tableWidth, tableHeight)
+                        val cell = (maxWidth - TABLE_GAP * (laid.size - 1)) / laid.size
+                        val tile = minOf(tableWidth, cell)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clearAndSetSemantics {}
+                                .tableFeel(
+                                    count = laid.size,
+                                    tile = cell,
+                                    gap = TABLE_GAP,
+                                ) { index ->
+                                    // Ответ на прикосновение, а не событие за
+                                    // столом: игрок сам тронул кость и ждёт
+                                    // ответа сейчас же. В «Повтор» такое не
+                                    // идёт — повторяют ход, а не ощупывание.
+                                    voice.sayRequested(
+                                        "${index + 1} из ${laid.size}: " +
+                                            "${tableTiles[index].spoken()}.",
+                                    )
+                                },
+                            horizontalArrangement = Arrangement.spacedBy(TABLE_GAP),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            laid.forEach { one ->
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                    TileFace(one.left, one.right, tile, tile * TABLE_ASPECT)
+                                }
+                            }
                         }
                     }
                 }
@@ -566,17 +638,31 @@ fun KozelScreen(
         }
     }
 
-    // На какой конец положить кость, которая подходит к обоим. Диалогом, а не
-    // выпадающим списком: скринридер объявляет диалог целиком и сразу ставит
-    // в него фокус.
+    // На какой конец положить кость, которая подходит к обоим, и не положить
+    // ли заодно парный дубль. Диалогом, а не выпадающим списком: скринридер
+    // объявляет диалог целиком и сразу ставит в него фокус.
     val pending = endOpen
     if (pending != null) {
         val places = moves.filterIsInstance<KozelMove.Place>().filter { it.tile == pending }
+        val both = bothWith(moves, pending)
         AlertDialog(
             onDismissRequest = { endOpen = null },
-            title = { Text("Куда положить ${pending.spoken()}") },
+            title = { Text(chooseTitle(pending, both)) },
             text = {
                 Column {
+                    // Обе кости — первым: это и новость (пара нашлась), и
+                    // ход, который называет обе кости сразу.
+                    if (both != null) {
+                        TextButton(
+                            onClick = {
+                                endOpen = null
+                                play(both)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Положить обе: ${both.left.spoken()} и ${both.right.spoken()}")
+                        }
+                    }
                     places.forEach { place ->
                         TextButton(
                             onClick = {
@@ -622,6 +708,25 @@ private fun endTitle(round: KozelRound, end: End): String {
     val number = round.table.endOf(end) ?: return side
     return "$side — к ${pipsName(number)}"
 }
+
+/**
+ * Ход двумя дублями, если [tile] в нём участвует.
+ *
+ * Нужен там, где спрашивают игрока: и когда он ткнул в кость пальцем, и
+ * когда для неё открыт диалог. Один ответ на оба вопроса — иначе диалог мог
+ * бы предложить не тот ход, которого ждали от нажатия.
+ */
+private fun bothWith(moves: List<KozelMove>, tile: Tile): KozelMove.PlaceBoth? =
+    moves.filterIsInstance<KozelMove.PlaceBoth>()
+        .firstOrNull { it.left == tile || it.right == tile }
+
+/**
+ * Заголовок выбора. С парным дублем выбор уже не только про сторону: за
+ * списком концов стоит ещё и «положить обе», и обещать в заголовке сторону
+ * нельзя.
+ */
+private fun chooseTitle(tile: Tile, both: KozelMove.PlaceBoth?): String =
+    if (both == null) "Куда положить ${tile.spoken()}" else "Что положить: ${tile.spoken()}"
 
 /**
  * Итог раунда одной фразой: кто его проиграл, сколько ему записали и что
@@ -712,6 +817,9 @@ private fun allowedPhrase(round: KozelRound): String {
             }
         }
         .toMutableList()
+    moves.filterIsInstance<KozelMove.PlaceBoth>().forEach { both ->
+        parts += "положить обе: ${both.left.spoken()} и ${both.right.spoken()}"
+    }
     if (moves.contains(KozelMove.Draw)) parts += "взять из базара"
     if (moves.contains(KozelMove.Pass)) parts += "пропустить ход"
     return "Можно: " + parts.joinToString(", ") + "."
@@ -722,7 +830,7 @@ private fun allowedPhrase(round: KozelRound): String {
  * повторяет то, что игрок только что сделал сам, поэтому здесь важнее
  * точность, чем разнообразие. Речь бота — в [KozelTalker].
  */
-private fun ownMovePhrase(move: KozelMove, lineWasEmpty: Boolean): String = when (move) {
+private fun ownMovePhrase(move: KozelMove, round: KozelRound, lineWasEmpty: Boolean): String = when (move) {
     is KozelMove.Place ->
         if (lineWasEmpty) {
             "Кладёшь ${move.tile.spoken()}."
@@ -730,6 +838,15 @@ private fun ownMovePhrase(move: KozelMove, lineWasEmpty: Boolean): String = when
             "Кладёшь ${move.tile.spoken()} ${move.end.title}."
         }
 
-    KozelMove.Draw -> "Ты берёшь из базара."
+    // Оба дубля: концы у них свои и названы самой костью — четвёрка идёт к
+    // четвёрке, единица к единице, — поэтому стороны тут не называем, их
+    // и без того не с чем спутать.
+    is KozelMove.PlaceBoth ->
+        "Кладёшь обе: ${move.left.spoken()} и ${move.right.spoken()}."
+
+    // Взятую кость называем вслух и всегда: она пришла из закрытого базара,
+    // и кроме этих слов игрок о ней не узнает ничего. Кость, взятая из
+    // базара, ложится в руку последней — движок только так её и выдаёт.
+    KozelMove.Draw -> "Ты берёшь из базара: ${round.handOf(PLAYER).last().spoken()}."
     KozelMove.Pass -> "Тебе нечем ходить, ход пропущен."
 }

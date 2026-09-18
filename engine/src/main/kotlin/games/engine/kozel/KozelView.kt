@@ -40,15 +40,11 @@ data class KozelView(
      * есть — ходить ею, нет — брать из базара, а пустой базар — пропуск.
      *
      * Считаются они по открытому состоянию и тем же кодом, что и в раунде
-     * ([placements]): разойтись этим двум нельзя.
+     * ([movesFor]): разойтись этим двум нельзя.
      */
     fun legalMoves(): List<KozelMove> {
         if (turn != seat) return emptyList()
-
-        val places = line.placements(hand)
-        if (places.isNotEmpty()) return places
-
-        return if (bazaarSize > 0) listOf(KozelMove.Draw) else listOf(KozelMove.Pass)
+        return line.movesFor(hand, bazaarSize)
     }
 
     /** Кости, которых бот не видел: ни у себя, ни на столе. */

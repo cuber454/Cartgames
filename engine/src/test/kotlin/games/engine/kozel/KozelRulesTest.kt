@@ -3,6 +3,7 @@ package games.engine.kozel
 import games.engine.tiles.tile
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -123,5 +124,43 @@ class KozelRulesTest {
         assertEquals(2, moves.size)
         assertTrue(moves.any { it.end == End.LEFT })
         assertTrue(moves.any { it.end == End.RIGHT })
+    }
+
+    @Test
+    fun `два дубля по концам — можно выложить оба за один ход`() {
+        // Кость на руке ищется по числу, а не по порядку в руке: четвёрка
+        // идёт к четвёрке, единица к единице, и порядок тут ни при чём.
+        val both = lineWithEnds(4, 1).bothDoubles(listOf(tile(1, 1), tile(5, 6), tile(4, 4)))
+        assertEquals(KozelMove.PlaceBoth(tile(4, 4), tile(1, 1)), both)
+    }
+
+    @Test
+    fun `дубль только к одному концу — двумя не ходят`() {
+        assertNull(lineWithEnds(4, 1).bothDoubles(listOf(tile(4, 4), tile(5, 6))))
+    }
+
+    @Test
+    fun `концы сошлись — двумя не ходят, дубль к этому числу в наборе один`() {
+        // Концы линии оба четвёрки, а дубль 4-4 на руке один: приставить его
+        // к двум концам сразу нечем.
+        val line = Line(listOf(tile(4, 6), tile(6, 4)), 4, 4)
+        assertNull(line.bothDoubles(listOf(tile(4, 4), tile(5, 6))))
+    }
+
+    @Test
+    fun `пустая линия — двумя не ходят, концов, к которым класть, нет`() {
+        assertNull(Line.EMPTY.bothDoubles(listOf(tile(4, 4), tile(1, 1))))
+    }
+
+    @Test
+    fun `оба дубля — это сверх обычных ходов, а не вместо них`() {
+        val line = lineWithEnds(4, 1)
+        val hand = listOf(tile(4, 4), tile(1, 1))
+
+        val moves = line.movesFor(hand, bazaarSize = 0)
+
+        assertTrue(moves.contains(KozelMove.Place(tile(4, 4), End.LEFT)))
+        assertTrue(moves.contains(KozelMove.Place(tile(1, 1), End.RIGHT)))
+        assertTrue(moves.contains(KozelMove.PlaceBoth(tile(4, 4), tile(1, 1))))
     }
 }

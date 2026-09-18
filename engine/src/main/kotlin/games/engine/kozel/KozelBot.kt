@@ -36,7 +36,12 @@ object KozelBot {
 
         // Ходить нечем — решать нечего: берём из базара, а пустой базар
         // пропускаем. Выбор здесь делает правило, а не бот.
-        val places = moves.filterIsInstance<KozelMove.Place>()
+        //
+        // Дублей по концам два, и оба разом, — это тоже ход, и бот его
+        // взвешивает наравне с прочими: выложить две кости зараз бывает
+        // выгодно, но не всегда — дубли гибкие, и держать их на руке тоже
+        // чего-то стоит.
+        val places = moves.filter { it is KozelMove.Place || it is KozelMove.PlaceBoth }
         if (places.isEmpty()) return moves.first()
 
         return when (difficulty) {
@@ -64,14 +69,35 @@ object KozelBot {
      * руке, второй — ещё и по невиданным костям. Своей руки не хватает,
      * чтобы понять, ответят тебе или нет: то, что у тебя тройка, ничего не
      * говорит о тройках соперника, а вот сколько троек уже вышло — говорит.
+     *
+     * Дублей по концам два — считаем их как один ход из двух костей: рука
+     * облегчается сразу на обе, и продолжения ищутся в том, что осталось.
      */
-    private fun score(view: KozelView, move: KozelMove.Place, memory: Boolean): Int {
-        val after = view.line.place(move.tile, move.end)
-        val rest = view.hand - move.tile
+    private fun score(view: KozelView, move: KozelMove, memory: Boolean): Int {
+        val after: Line
+        val rest: List<Tile>
+        val pips: Int
+        when (move) {
+            is KozelMove.Place -> {
+                after = view.line.place(move.tile, move.end)
+                rest = view.hand - move.tile
+                pips = move.tile.pips
+            }
+
+            is KozelMove.PlaceBoth -> {
+                after = view.line.place(move.left, End.LEFT).place(move.right, End.RIGHT)
+                rest = view.hand - move.left - move.right
+                pips = move.left.pips + move.right.pips
+            }
+
+            // Ход не за бота — взвешивать нечего. Сюда не заходят:
+            // [chooseMove] зовёт счёт только на приставлениях.
+            else -> return Int.MIN_VALUE
+        }
 
         // Тяжёлое сбрасываем вдвойне охотнее: очки на руке — единственное,
         // что записывают за столом, и записывают их тому, у кого рука осталась.
-        var score = move.tile.pips * 2
+        var score = pips * 2
 
         score += rest.count { after.canPlay(it).isNotEmpty() } * CONTINUATION
 

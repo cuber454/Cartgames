@@ -3,7 +3,6 @@ package games.cardgames.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +19,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -42,8 +45,8 @@ import games.engine.Suit
  * Карта устроена как настоящая: метка в двух углах (чтобы читалась и
  * вверх ногами), у номерных карт масти разложены по лицу и в нижней
  * половине перевёрнуты — как в настоящей колоде, у туза одна большая
- * масть, у валета, дамы и короля — крупная буква. Буквы русские (Т, К, Д,
- * В): приложение называет карты по-русски, и на русской колоде буквы те же.
+ * масть, у валета, дамы и короля — фигура. Буквы русские (Т, К, Д, В):
+ * приложение называет карты по-русски, и на русской колоде буквы те же.
  *
  * Карта — только картинка: озвучку даёт подпись рядом. Поэтому вся
  * разметка внутри закрыта от скринридера ([clearAndSetSemantics]) —
@@ -157,21 +160,192 @@ private fun FaceOf(card: Card, ink: Color, width: Dp, height: Dp) {
 
         card.rank.value in 6..10 -> PipField(card, ink, width, height)
 
-        else -> Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = card.rank.sign,
-                color = ink,
-                fontSize = (height.value * 0.30f).sp,
-                fontWeight = FontWeight.Bold,
-            )
-            SuitSign(card.suit, ink, (height.value * 0.22f).dp)
-        }
+        else -> FigureFace(card, ink, width, height)
     }
 }
+
+/**
+ * Валет, дама или король — фигура в пол-карты, повторённая зеркально.
+ *
+ * Зеркальность здесь не украшение, а то же правило, что у угловой метки:
+ * карту кладут на стол как попало, и перевёрнутая картинка не должна
+ * означать ничего другого. Поэтому фигура нарисована дважды — вторая
+ * половина есть первая, повёрнутая на пол-оборота вокруг центра, — и карта
+ * читается с любого конца, как в настоящей колоде.
+ *
+ * Различаются фигуры силуэтом, а не подписью: у короля корона, у дамы
+ * кокошник, у валета шляпа с пером. Силуэт читается на самом мелком
+ * размере, где ни лиц, ни узоров всё равно не разглядеть; буквы В, Д и К
+ * при этом остаются в углах — там, где их ищут.
+ *
+ * Знак масти один и стоит посередине, где сходятся половины: на такой
+ * карте одной масти довольно, а середина иначе пустовала бы.
+ */
+@Composable
+private fun FigureFace(card: Card, ink: Color, width: Dp, height: Dp) {
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            // Толщину линий задаём от размера карты: на крупной карте тонкая
+            // линия слабовидящему не видна, на мелкой — заливает рисунок.
+            val pen = size.minDimension * 0.035f
+            drawHalf(card.rank, ink, FaceGrid(size.width, size.height, mirror = false), pen)
+            drawHalf(card.rank, ink, FaceGrid(size.width, size.height, mirror = true), pen)
+        }
+        // Знак масти — поверх фигуры и ровно посередине: там сходятся её
+        // половины, и там же у настоящей карты стоит масть.
+        SuitSign(
+            card.suit,
+            ink,
+            (height.value * 0.18f).dp,
+            modifier = Modifier.align(Alignment.Center),
+        )
+    }
+}
+
+/**
+ * Половина фигуры: голова, плечи и головной убор по достоинству.
+ *
+ * Все доли — от ширины и высоты карты, а не в точках: карта рисуется в
+ * разных размерах, и фигура должна меняться вместе с ней. [mirror] —
+ * та же фигура, повёрнутая на пол-оборота: её и рисует вторая половина.
+ */
+private fun DrawScope.drawHalf(rank: Rank, ink: Color, grid: FaceGrid, pen: Float) {
+    val head = grid.at(HEAD_X, HEAD_Y)
+    val headRadius = HEAD_R * size.width
+
+    // Плечи и шея — контуром, а не заливкой: середина карты остаётся
+    // светлой, и знак масти поверх неё читается. Низ срезан по линии сгиба:
+    // половины сходятся по ней встык, как у настоящей двуглавой карты, и
+    // фигура от этого читается корпусом, а не овалом.
+    val bust = Path().apply {
+        val fold = grid.at(0.50f, 0.50f)
+        moveTo(fold.x, fold.y)
+        val leftEdge = grid.at(0.12f, 0.50f)
+        lineTo(leftEdge.x, leftEdge.y)
+        val leftSlope = grid.at(0.245f, 0.325f)
+        lineTo(leftSlope.x, leftSlope.y)
+        curveTo(grid, 0.30f to 0.275f, 0.375f to 0.245f, 0.44f to 0.225f)
+        // Шея: отрезок под головой, целиком закрытый ею.
+        val neckRight = grid.at(0.56f, 0.225f)
+        lineTo(neckRight.x, neckRight.y)
+        curveTo(grid, 0.625f to 0.245f, 0.70f to 0.275f, 0.755f to 0.325f)
+        val rightEdge = grid.at(0.88f, 0.50f)
+        lineTo(rightEdge.x, rightEdge.y)
+        lineTo(fold.x, fold.y)
+    }
+    drawPath(bust, ink, style = Stroke(width = pen, join = StrokeJoin.Round, cap = StrokeCap.Round))
+
+    drawCircle(ink, headRadius, head)
+
+    when (rank) {
+        // Корона: зубцами вверх, поверх головы.
+        Rank.KING -> drawPath(
+            filled(
+                grid,
+                listOf(
+                    0.40f to 0.115f, 0.40f to 0.045f, 0.45f to 0.09f,
+                    0.50f to 0.038f,
+                    0.55f to 0.09f, 0.60f to 0.045f, 0.60f to 0.115f,
+                ),
+            ),
+            ink,
+        )
+
+        // Кокошник: широкий веер за головой. Он шире самой головы — по
+        // одному силуэту видно, что это дама, а не кто-то ещё.
+        Rank.QUEEN -> drawPath(
+            Path().apply {
+                val start = grid.at(0.33f, 0.185f)
+                moveTo(start.x, start.y)
+                curveTo(grid, 0.34f to 0.075f, 0.42f to 0.045f, 0.50f to 0.045f)
+                curveTo(grid, 0.58f to 0.045f, 0.66f to 0.075f, 0.67f to 0.185f)
+                curveTo(grid, 0.62f to 0.14f, 0.56f to 0.125f, 0.50f to 0.125f)
+                curveTo(grid, 0.44f to 0.125f, 0.38f to 0.14f, 0.33f to 0.185f)
+                close()
+            },
+            ink,
+        )
+
+        // Шляпа с пером: поля, невысокая тулья и перо сбоку.
+        Rank.JACK -> {
+            drawPath(
+                filled(
+                    grid,
+                    listOf(0.365f to 0.155f, 0.635f to 0.155f, 0.60f to 0.115f, 0.40f to 0.115f),
+                ),
+                ink,
+            )
+            drawPath(
+                filled(
+                    grid,
+                    listOf(0.43f to 0.115f, 0.44f to 0.065f, 0.56f to 0.065f, 0.57f to 0.115f),
+                ),
+                ink,
+            )
+            drawPath(
+                Path().apply {
+                    val start = grid.at(0.565f, 0.108f)
+                    moveTo(start.x, start.y)
+                    curveTo(grid, 0.62f to 0.09f, 0.67f to 0.065f, 0.70f to 0.04f)
+                    curveTo(grid, 0.655f to 0.06f, 0.60f to 0.085f, 0.565f to 0.108f)
+                    close()
+                },
+                ink,
+            )
+        }
+
+        else -> Unit
+    }
+}
+
+/**
+ * Точка на карте по долям её ширины и высоты.
+ *
+ * При [mirror] точка отражается от центра карты — так вторая половина
+ * фигуры получается из первой поворотом на пол-оборота, без разворотов
+ * холста: отражение точки по обеим осям есть тот же поворот.
+ */
+private class FaceGrid(val width: Float, val height: Float, val mirror: Boolean) {
+    fun at(x: Float, y: Float): Offset {
+        val px = if (mirror) 1f - x else x
+        val py = if (mirror) 1f - y else y
+        return Offset(px * width, py * height)
+    }
+}
+
+/** Кривая Безье по долям карты: две опорные точки и конец. */
+private fun Path.curveTo(
+    grid: FaceGrid,
+    control1: Pair<Float, Float>,
+    control2: Pair<Float, Float>,
+    end: Pair<Float, Float>,
+) {
+    val c1 = grid.at(control1.first, control1.second)
+    val c2 = grid.at(control2.first, control2.second)
+    val e = grid.at(end.first, end.second)
+    cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
+}
+
+/** Замкнутая фигура по долям карты: углы и есть её контур. */
+private fun filled(grid: FaceGrid, vararg corners: List<Pair<Float, Float>>): Path {
+    // flatMap, а не flatten: у Array<out List<T>> нет flatten — тот есть только
+    // у массива массивов и у Iterable из Iterable.
+    val points = corners.flatMap { it }
+    return Path().apply {
+        points.forEachIndexed { index, (x, y) ->
+            val point = grid.at(x, y)
+            if (index == 0) moveTo(point.x, point.y) else lineTo(point.x, point.y)
+        }
+        close()
+    }
+}
+
+/** Голова фигуры: одна и та же у всех троих, различаются они убором. */
+private const val HEAD_X = 0.50f
+private const val HEAD_Y = 0.175f
+
+/** Радиус головы — доля ширины карты, а не высоты: иначе на вытянутой карте она вытянется. */
+private const val HEAD_R = 0.10f
 
 /** Масти, разложенные по лицу карты, как в настоящей колоде. */
 @Composable
@@ -246,8 +420,8 @@ private fun CornerMark(card: Card, ink: Color, rankSize: TextUnit, suitSize: Dp,
  * чёткий на любом размере.
  */
 @Composable
-private fun SuitSign(suit: Suit, ink: Color, size: Dp) {
-    Canvas(Modifier.size(size)) {
+private fun SuitSign(suit: Suit, ink: Color, size: Dp, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(size)) {
         drawPath(suitPath(suit, this.size.minDimension), ink)
     }
 }

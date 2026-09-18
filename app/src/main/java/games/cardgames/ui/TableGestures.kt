@@ -4,11 +4,16 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.semantics.AccessibilityAction
 import androidx.compose.ui.semantics.ScrollAxisRange
 import androidx.compose.ui.semantics.SemanticsActions
@@ -84,12 +89,27 @@ private fun sideGesture(dx: Float): TableGesture =
  * «Что можно», и «Повтори» остаются кнопками.
  */
 @Composable
-fun Modifier.tableGestures(onGesture: (TableGesture) -> Unit): Modifier {
+fun Modifier.tableGestures(
+    /**
+     * Где жест вбок не наш — в координатах окна. Так исключается полоса
+     * стола: по ней водят пальцем, чтобы ощупать кости (см. [tableFeel]), и
+     * листать ею руку заодно нельзя. По умолчанию не исключено ничего.
+     */
+    skip: (Offset) -> Boolean = { false },
+    onGesture: (TableGesture) -> Unit,
+): Modifier {
     // Лямбда переживает перерисовку, а её содержимое меняется: держим
     // свежую и читаем в момент жеста, а не в момент подписки.
     val current by rememberUpdatedState(onGesture)
+    val skipNow by rememberUpdatedState(skip)
+
+    // Где этот узел на экране: касание приходит в его собственных
+    // координатах, а полоса стола задана в оконных, и свести их можно только
+    // здесь. Читается в момент жеста, поэтому перерисовку переживать не надо.
+    var origin by remember { mutableStateOf(Offset.Zero) }
 
     return this
+        .onGloballyPositioned { origin = it.positionInWindow() }
         .pointerInput(Unit) {
             val min = SWIPE_MIN.toPx()
             val edge = SWIPE_EDGE.toPx()
@@ -98,6 +118,11 @@ fun Modifier.tableGestures(onGesture: (TableGesture) -> Unit): Modifier {
                 // Смотрим раньше детей: пока жест наш, карты и кнопки под
                 // пальцами не должны считать, что их нажали.
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+
+                // Касание пришлось на полосу стола — там ощупывают кости.
+                // Уходим сразу и ничего не гасим: пусть жест доиграет тот,
+                // кому он там и адресован.
+                if (skipNow(down.position + origin)) return@awaitEachGesture
 
                 var base = down.position
                 var fingers = 1
