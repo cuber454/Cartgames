@@ -291,12 +291,13 @@ fun ThousandScreen(
     fun play(move: ThousandMove, note: String = "") {
         val round = session.round
         val tricksBefore = round.tricksPlayed().size
+        // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
+        // назвать его надо сейчас, иначе две новые карты придётся искать
+        // в руке самому и на слух сравнивать с тем, что помнишь.
+        val taken = move as? ThousandMove.TakePrikups
         val phrase = ownPhrase(
             move,
-            // Свой прикуп берут вслепую, и в руке он оказывается уже потом:
-            // назвать его надо сейчас, иначе две новые карты придётся искать
-            // в руке самому и на слух сравнивать с тем, что помнишь.
-            prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
+            prikup = taken?.let { round.prikup(it.index) }.orEmpty(),
         )
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
@@ -305,6 +306,11 @@ fun ThousandScreen(
         voice.sayOwnMove(
             phrase + note + trickSuffix(round, tricksBefore),
             afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
+            // Прикуп — ход, о котором скринридер сам не расскажет: он прочитал
+            // кнопку «Взять прикуп», а не то, что пришло в руку. Сказать это
+            // вполголоса, «для Повтора», значит оставить игрока искать две
+            // новые карты на слух. Поэтому здесь фраза звучит всегда.
+            aloud = taken != null,
         )
         session.persist()
         finishIfOver()
@@ -546,10 +552,16 @@ fun ThousandScreen(
      * Шаг по руке вправо-влево. С какого места ни начни — карта называется
      * целиком: тем, кто слушает, номер без названия не говорит ничего, а
      * «подходит или нет» — это и есть ответ на вопрос «чем мне ходить».
+     *
+     * Говорит тот, кто читает экран вообще: работает скринридер — он, выключен
+     * — приложение. Через [TableVoice.say], а не [TableVoice.sayRequested]:
+     * свайп по руке — это чтение экрана, и голос приложения на нём перебивал
+     * скринридер, из-за чего игрок слышал чужую речь вместо своей и терял
+     * место, на котором остановился.
      */
     fun walkHand(step: Int) {
         if (hand.isEmpty()) {
-            voice.sayRequested("Карт на руке нет.")
+            voice.say("Карт на руке нет.")
             return
         }
         val next = if (cursor < 0) {
@@ -560,7 +572,7 @@ fun ThousandScreen(
         cursor = next
         val card = hand[next]
         val fits = if (card in playable) "подходит" else "не подходит"
-        voice.sayRequested("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
+        voice.say("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
     }
 
     Column(

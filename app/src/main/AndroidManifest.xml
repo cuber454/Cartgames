@@ -31,6 +31,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Журнал уезжает наружу кнопкой «Отправить»: во внутреннюю память
+             приложения снаружи хода нет, и единственная дверь — этот
+             провайдер. Отдаёт он ровно один файл (журнал) и только тому, кому
+             игрок сам его отправил, — на время отправки и не дольше. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.journal"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

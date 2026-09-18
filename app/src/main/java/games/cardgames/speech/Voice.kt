@@ -1,6 +1,7 @@
 package games.cardgames.speech
 
 import android.view.View
+import games.cardgames.diag.Journal
 import games.cardgames.settings.VoiceMode
 
 /**
@@ -35,6 +36,7 @@ fun sayEvent(view: View?, speaker: Speaker, appVoice: Boolean, text: String, whe
     if (appVoice) {
         if (whenReady) speaker.sayWhenReady(text) else speaker.say(text)
     } else {
+        Journal.note("речь", "скринридеру (${speaker.readerTitle()}): $text")
         // announceForAccessibility помечен устаревшим в API 36, но замены
         // ему нет: это по-прежнему единственный способ отдать фразу
         // скринридеру, не трогая экран. Он и внутри делает ровно то же —

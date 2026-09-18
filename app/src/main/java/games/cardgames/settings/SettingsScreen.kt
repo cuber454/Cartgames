@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_DURAK
 import games.cardgames.GAME_THOUSAND
+import games.cardgames.diag.Journal
 import games.cardgames.durak.DURAK_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
@@ -99,6 +100,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
     var resetAsked by remember { mutableStateOf(false) }
+    var clearAsked by remember { mutableStateOf(false) }
+
+    // Размер журнала читаем при входе: по нему видно, есть ли что отправлять,
+    // не открывая файл. За время на экране он растёт — но это уже неважно,
+    // важно, что было до.
+    var journalSize by remember { mutableStateOf(Journal.sizeTitle(context)) }
 
     // Черновик скорости: пока палец на ползунке, настройку не трогаем —
     // иначе Speaker пересобирался бы на каждый пиксель движения.
@@ -469,6 +476,44 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             } else {
                 resetAsked = true
                 announce("Нажми ещё раз, и счёт обнулится. Побед было ${loadScore(context).wins}.")
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // --- Журнал ---------------------------------------------------------
+
+        // Журнал — про то, что случилось и требует рассказа: «кнопку не
+        // читает», «говорит не тем голосом». Он пишется сам, поэтому стоит в
+        // самом низу: пока всё звучит как надо, сюда не заглядывают.
+        Text("Журнал", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Что приложение делало, кто что сказал и какие кнопки были на экране. " +
+                "Если что-то звучит не так — отправь журнал: по нему видно, " +
+                "до чего дошло дело.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        SettingButton("Отправить журнал: $journalSize") {
+            val intent = Journal.shareIntent(context)
+            if (intent == null) {
+                announce("Журнал пуст, отправлять нечего.")
+            } else {
+                runCatching { context.startActivity(intent) }
+                announce("Выбирай, куда отправить журнал.")
+            }
+        }
+
+        SettingButton(if (clearAsked) "Нажми ещё раз — журнал очистится" else "Очистить журнал") {
+            if (clearAsked) {
+                Journal.clear()
+                journalSize = "пусто"
+                clearAsked = false
+                announce("Журнал очищен.")
+            } else {
+                clearAsked = true
+                announce("Нажми ещё раз, и журнал очистится. Сейчас в нём $journalSize.")
             }
         }
 

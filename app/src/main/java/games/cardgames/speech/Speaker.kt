@@ -7,6 +7,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import games.cardgames.diag.Journal
 import java.util.Locale
 
 /**
@@ -77,10 +78,21 @@ class Speaker(
         private set
 
     private val touchExplorationListener =
-        AccessibilityManager.TouchExplorationStateChangeListener { screenReaderOn = readsScreen() }
+        AccessibilityManager.TouchExplorationStateChangeListener {
+            screenReaderOn = readsScreen()
+            Journal.note("речь", "скринридер теперь ${readerTitle()}")
+        }
 
     init {
         runCatching { accessibility?.addTouchExplorationStateChangeListener(touchExplorationListener) }
+        // Кто говорит — половина всех жалоб «слышу не то». Пишем при создании:
+        // по этой строке видно, считало ли приложение скринридер работающим.
+        Journal.note(
+            "речь",
+            "скринридер: ${readerTitle()}, " +
+                "доступность ${if (accessibility?.isEnabled == true) "включена" else "выключена"}, " +
+                "обзор касанием ${if (accessibility?.isTouchExplorationEnabled == true) "включён" else "выключен"}",
+        )
     }
 
     private fun readsScreen(): Boolean = runCatching {
@@ -98,6 +110,9 @@ class Speaker(
         if (!screenReaderOn) return
         runCatching { accessibility?.interrupt() }
     }
+
+    /** Работает ли скринридер по мнению приложения. Пишется в журнал при запуске. */
+    fun readerTitle(): String = if (screenReaderOn) "работает" else "не работает"
 
     override fun onInit(status: Int) {
         // Выбранный синтезатор мог исчезнуть — тогда молча возвращаемся
@@ -150,6 +165,7 @@ class Speaker(
         if (!ready || text.isBlank()) return
         // Свою фразу начинаем с тишины: скринридер, если он читает, умолкает.
         if (interrupt) interruptScreenReader()
+        Journal.note("речь", "приложение говорит: $text")
         val mode = if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         engine?.speak(text, mode, null, text)
     }

@@ -4,12 +4,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -27,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
 import games.cardgames.durak.durakTransferAllowed
@@ -42,14 +47,35 @@ import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import kotlinx.coroutines.delay
+
+/**
+ * Пауза перед записью дерева экрана. Снимаем его не в тот же миг, а когда
+ * разметка улеглась: иначе в журнал попадёт предыдущий экран, и искать в нём
+ * пропавшую кнопку будет нечего.
+ */
+private const val TREE_DUMP_DELAY_MS = 600L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Журнал заводим до всего остального: беда, о которой придётся
+        // рассказывать, случается с первых секунд — на первом же чтении
+        // экрана. Здесь же запоминается контекст, чтобы строку можно было
+        // записать откуда угодно.
+        Journal.start(this)
         setContent {
             MaterialTheme {
+                // Панели системы — статус-строка сверху и полоса навигации
+                // снизу — при targetSdk 36 рисуются поверх приложения. Без
+                // этого отступа нижние кнопки уезжают под полосу: палец до
+                // них доходит, а нажатие забирает система. Отступ внутри
+                // Surface, а не на нём: так фон остаётся во всё окно, а
+                // содержимое отходит от панелей.
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    App()
+                    Box(modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing)) {
+                        App()
+                    }
                 }
             }
         }
@@ -76,6 +102,17 @@ private fun App() {
     // и недоигранная тысяча друг о друге не знают.
     val session = remember { DurakSession(context) }
     val thousand = remember { ThousandSession(context) }
+
+    // Что видит скринридер на открывшемся экране — в журнал. Это ответ на
+    // «кнопка есть, а он её не читает»: в записи видно каждое имя, которое до
+    // него дошло, и где узел стоит на экране — а узел за границей экрана и
+    // есть та самая пропавшая кнопка.
+    val view = LocalView.current
+    LaunchedEffect(screen) {
+        delay(TREE_DUMP_DELAY_MS)
+        Journal.note("экран", "открыт экран «$screen»")
+        Journal.dumpTree(view)
+    }
 
     fun openSettings(from: String) {
         settingsBack = from

@@ -1,6 +1,7 @@
 package games.cardgames.speech
 
 import android.view.View
+import games.cardgames.diag.Journal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -112,10 +113,24 @@ class TableVoice(
      * Свой ход. Скринридер уже прочитал карту, которую игрок нажал, — второй
      * раз называть её не надо, это и была та самая каша. Фразу всё равно
      * запоминаем: её повторит кнопка «Повтори».
+     *
+     * [aloud] — ход, о котором скринридер сам не расскажет: он прочитал
+     * карту, которой ходили, а не то, что с ней пришло. Прикуп — ровно такой
+     * случай: две новые карты игрок иначе ищет в руке сам и сравнивает на
+     * слух с тем, что помнит. Такую фразу отдаём тем же путём, что и событие
+     * за столом: говорит тот, чья сейчас очередь, — при работающем
+     * скринридере он, при выключенном приложение.
      */
-    fun sayOwnMove(text: String, afterMs: Long = 0L) {
+    fun sayOwnMove(text: String, afterMs: Long = 0L, aloud: Boolean = false) {
         note(text, afterMs)
-        if (!appVoice()) return
+        if (aloud) {
+            say(text, afterMs = afterMs)
+            return
+        }
+        if (!appVoice()) {
+            Journal.note("речь", "сказано только в «Повтори» (говорит скринридер): $text")
+            return
+        }
         if (afterMs <= 0) {
             speaker.say(text)
         } else {
@@ -131,6 +146,7 @@ class TableVoice(
      */
     fun sayRequested(text: String) {
         note(text)
+        Journal.note("речь", "игрок спросил — отвечает приложение: $text")
         speaker.say(text)
     }
 

@@ -447,10 +447,16 @@ fun DurakScreen(
      * Шаг по руке вправо-влево. С какого места ни начни — карта называется
      * целиком: тем, кто слушает, номер без названия не говорит ничего, а
      * «подходит или нет» — это и есть ответ на вопрос «чем мне ходить».
+     *
+     * Говорит тот, кто читает экран вообще: работает скринридер — он, выключен
+     * — приложение. Через [TableVoice.say], а не [TableVoice.sayRequested]:
+     * свайп по руке — это чтение экрана, и голос приложения на нём перебивал
+     * скринридер, из-за чего игрок слышал чужую речь вместо своей и терял
+     * место, на котором остановился.
      */
     fun walkHand(step: Int) {
         if (hand.isEmpty()) {
-            voice.sayRequested("Карт на руке нет.")
+            voice.say("Карт на руке нет.")
             return
         }
         val next = if (cursor < 0) {
@@ -461,7 +467,7 @@ fun DurakScreen(
         cursor = next
         val card = hand[next]
         val fits = if (card in playable) "подходит" else "не подходит"
-        voice.sayRequested("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
+        voice.say("${next + 1} из ${hand.size}: ${card.spoken()}, $fits.")
     }
 
     Column(
