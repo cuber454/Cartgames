@@ -71,7 +71,7 @@ class KozelRound private constructor(
     /** Кто ходит сейчас. */
     private var turnSeat: Int,
     /** Сколько ходов подряд пропущено. Сброс — как только кость легла. */
-    private var passes: Int,
+    private var passesCount: Int,
 ) : GameRules<KozelRound> {
 
     /** Кто вышел, выложив последнюю кость. Пусто — ещё не вышел никто. */
@@ -93,6 +93,15 @@ class KozelRound private constructor(
 
     /** Сколько костей осталось в базаре. Содержимого не показываем никому. */
     val bazaarSize: Int get() = bazaar.size
+
+    /**
+     * Сколько ходов подряд пропущено.
+     *
+     * Наружу — затем, что это часть состояния партии, а не мелкая подробность
+     * хода: раунд, поднятый с диска после первого пропуска, обязан помнить,
+     * что он был, иначе второй пропуск не закроет линию «рыбой».
+     */
+    val passes: Int get() = passesCount
 
     /**
      * Кости, оставшиеся в базаре, — в том порядке, в каком их будут брать.
@@ -141,7 +150,7 @@ class KozelRound private constructor(
                 require(hands[seat].remove(move.tile)) { "кости ${move.tile.spoken()} нет на руке" }
                 line = line.place(move.tile, move.end)
                 // Кость легла — счёт пропусков начинается заново.
-                passes = 0
+                passesCount = 0
                 if (hands[seat].isEmpty()) {
                     out = seat
                     return
@@ -157,8 +166,8 @@ class KozelRound private constructor(
             }
 
             KozelMove.Pass -> {
-                passes++
-                if (passes >= PASSES_TO_FISH) {
+                passesCount++
+                if (passesCount >= PASSES_TO_FISH) {
                     fish = true
                     return
                 }
@@ -296,7 +305,7 @@ class KozelRound private constructor(
                 bazaar = bazaar.toMutableList(),
                 line = line,
                 turnSeat = turn,
-                passes = passes,
+                passesCount = passes,
             )
         }
 

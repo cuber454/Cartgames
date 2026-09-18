@@ -95,4 +95,33 @@ class KozelMatch(
         }
         return summary
     }
+
+    companion object {
+
+        /**
+         * Матч с середины: так его поднимают с диска.
+         *
+         * Матч на паузе — это счёт, номер раунда и недоигранная раздача.
+         * Доигранный матч не поднимают: он итог, а не пауза, поэтому
+         * победитель здесь всегда пуст и разыгрывается он заново.
+         */
+        fun restore(
+            rules: KozelRules,
+            round: KozelRound,
+            scores: List<Int>,
+            roundNumber: Int,
+            random: Random = Random.Default,
+        ): KozelMatch {
+            require(scores.size == SEATS) { "за столом $SEATS места" }
+            require(!round.finished) { "доигранный раунд поднимать нечего" }
+            require(scores.none { it >= rules.target }) { "матч уже кончен" }
+            require(roundNumber >= 1) { "номер раунда считается с единицы" }
+
+            val match = KozelMatch(rules, random)
+            match.round = round
+            match.roundNumber = roundNumber
+            scores.forEachIndexed { seat, points -> match.scores[seat] = points }
+            return match
+        }
+    }
 }
