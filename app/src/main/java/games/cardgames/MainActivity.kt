@@ -46,7 +46,6 @@ import games.cardgames.settings.loadSettings
 import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
-import games.cardgames.speech.sayEvent
 import kotlinx.coroutines.delay
 
 /**
@@ -220,7 +219,6 @@ private fun GamesScreen(
         (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
 
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
-    val view = LocalView.current
 
     LaunchedEffect(Unit) {
         if (!appVoice) return@LaunchedEffect
@@ -249,7 +247,7 @@ private fun GamesScreen(
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (paused) "Дурак — продолжить партию" else "Дурак — игра против бота")
+            Text(if (paused) "Дурак — продолжить партию" else "Дурак — игра против соперника")
         }
 
         if (paused) {
@@ -277,7 +275,7 @@ private fun GamesScreen(
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (thousandPaused) "Тысяча — продолжить партию" else "Тысяча — игра против бота")
+            Text(if (thousandPaused) "Тысяча — продолжить партию" else "Тысяча — игра против соперника")
         }
 
         if (thousandPaused) {
@@ -300,8 +298,12 @@ private fun GamesScreen(
 }
 
 /**
- * Меню: игры и помощник в одной программе, общий слой озвучки.
- * Раздел «Помощник» появится следом за игрой.
+ * Главное меню: игра, список игр, настройки — и общий слой озвучки.
+ *
+ * Порядок один и тот же, и он же — порядок дел за столом: сперва игра, в
+ * которую играли последней (вернуться к ней хотят чаще всего), потом выбор
+ * другой игры, потом настройки. Кнопки-заглушки здесь не стоят: раздел,
+ * которого ещё нет, читается как поломка — «нажимаю, а он молчит».
  */
 @Composable
 private fun MenuScreen(
@@ -336,7 +338,6 @@ private fun MenuScreen(
 
     // Кто говорит: приложение или скринридер. В каждый момент — ровно один.
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
-    val view = LocalView.current
 
     // Приветствие звучит только тогда, когда говорит приложение. В нём нет
     // ничего, чего нет на экране, — а когда читает скринридер, он и так
@@ -365,14 +366,14 @@ private fun MenuScreen(
         if (settings.lastGame == GAME_THOUSAND) {
             Button(onClick = onThousand, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    if (thousandPaused) "Продолжить партию в тысячу" else "Тысяча — игра против бота",
+                    if (thousandPaused) "Продолжить партию в тысячу" else "Тысяча — игра против соперника",
                 )
             }
             Spacer(Modifier.height(8.dp))
         } else {
             Button(onClick = onDurak, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    if (paused) "Продолжить партию в дурака" else "Дурак — игра против бота",
+                    if (paused) "Продолжить партию в дурака" else "Дурак — игра против соперника",
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -389,20 +390,12 @@ private fun MenuScreen(
         // Справка по правилам живёт на экране игры, в «Ещё»: её открывают
         // за столом, когда споткнулись о ход, а не из меню. В главном меню
         // лишняя кнопка только удлиняет список.
+        //
+        // Подпись называет то, что откроется из меню, — общую половину
+        // настроек. Настройки игры приходят сюда не отсюда, а из-за стола,
+        // кнопкой наверху (SETTINGS.md, 2).
         Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
-            Text("Настройки — речь, звук, вибрация")
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Button(
-            // Ответ на нажатие: игрок ждёт его, поэтому говорим и тогда,
-            // когда за столом говорит скринридер, — но не поверх него,
-            // а ему же, чтобы он произнёс это в свою очередь.
-            onClick = { sayEvent(view, speaker, appVoice, "Раздел «Помощник» ещё в работе.") },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Помощник — скоро")
+            Text("Настройки — речь, звук, журнал")
         }
     }
 }
