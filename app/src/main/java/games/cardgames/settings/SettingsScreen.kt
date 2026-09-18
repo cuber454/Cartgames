@@ -490,7 +490,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             // Склонять имя программа не станет: «у Меркурия» из «Меркурий»
             // не вывести. Поэтому имя звучит там, где соперник действует
             // («Меркурий берёт прикуп»), а падежные фразы говорят
-            // «соперник» (SETTINGS.md, 7).
+            // «соперник» (SETTINGS.md, 8).
             Text("Имя соперника", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(4.dp))
             OutlinedTextField(

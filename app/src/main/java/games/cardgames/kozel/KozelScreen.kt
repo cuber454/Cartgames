@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.settings.BOT_PITCH_KOZEL
@@ -380,7 +381,10 @@ fun KozelScreen(
         // никто не ждёт.
         if (played && turnMine) {
             val text = if (session.match.round.table.isEmpty) {
-                TURN_PHRASE
+                // Раунд открывают младшим дублем: назвать его — часть хода.
+                // Без этого игрок слышит только «твой ход» и перебирает руку
+                // вслепую, хотя ход у него ровно один.
+                openingPhrase(session.match.round) ?: TURN_PHRASE
             } else {
                 endsPhrase(session.match.round)
             }
@@ -522,7 +526,6 @@ fun KozelScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clearAndSetSemantics {}
                                 .tableFeel(
                                     count = laid.size,
                                     tile = cell,
@@ -540,8 +543,26 @@ fun KozelScreen(
                             horizontalArrangement = Arrangement.spacedBy(TABLE_GAP),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            laid.forEach { one ->
-                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            laid.forEachIndexed { index, one ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        // Кость на столе — своя весть для
+                                        // скринридера, ровно как кость на
+                                        // руке: он читает её под пальцем, одну
+                                        // за другой, и называет, которая по
+                                        // счёту. Одной подписью на всю линию
+                                        // этого не сделать — тогда под пальцем
+                                        // звучит вся линия разом, а пощупать
+                                        // одну кость нечем. Полной линией
+                                        // остаётся текст выше и «Что на столе».
+                                        .semantics {
+                                            contentDescription =
+                                                "${index + 1} из ${laid.size}: " +
+                                                    "${tableTiles[index].spoken()}"
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
                                     TileFace(one.left, one.right, tile, tile * TABLE_ASPECT)
                                 }
                             }
@@ -793,8 +814,24 @@ private fun endsPhrase(round: KozelRound): String = "${round.spokenEnds()}. $TUR
 private fun refusalPhrase(round: KozelRound): String = when {
     round.finished -> "Раунд кончился."
     round.turn != PLAYER -> "Сейчас ход соперника, подожди."
+    // Отказ на первом ходу звучал бы как «этой костью не пройти», хотя
+    // пройти можно — только другой костью. Поэтому называем ту, которой
+    // раунд и открывают.
+    openingPhrase(round) != null -> "Раунд открывают младшим дублем. $TURN_PHRASE"
     round.bazaarSize > 0 -> "Этой костью не пройти. Возьми из базара."
     else -> "Этой костью не пройти. Ход придётся пропустить."
+}
+
+/**
+ * Первый ход раунда: младший дубль, которым его открывают, — и больше
+ * никакого. Пусто — открывать нечем (дублей нет ни у кого) или раунд уже
+ * начат: тогда это не первый ход, и ходят как обычно.
+ */
+private fun openingPhrase(round: KozelRound): String? {
+    if (!round.table.isEmpty) return null
+    val opening = round.legalMoves(PLAYER).filterIsInstance<KozelMove.Place>().singleOrNull()
+        ?: return null
+    return "$TURN_PHRASE Начинаешь младшим дублем: ${opening.tile.spoken()}."
 }
 
 /**

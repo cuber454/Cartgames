@@ -348,7 +348,8 @@ class KozelRound private constructor(
          * Кто начинает раунд.
          *
          * Младший дубль: пусто-пусто, потом один-один и так далее — чей
-         * дубль младше, тот и ходит первым. Дублей ни у кого нет — старшая
+         * дубль младше, тот и ходит первым, и он же обязан открыть раунд
+         * этим дублем (см. [movesFor]). Дублей ни у кого нет — старшая
          * кость по сумме точек; при равной сумме смотрим на старшую
          * половину, а если и она равна, берёт тот, кто за столом младше по
          * месту. Полное равенство возможно: шесть-три и пять-четыре стоят
@@ -356,8 +357,7 @@ class KozelRound private constructor(
          */
         fun openerSeat(hands: List<List<Tile>>): Int {
             /** Младший дубль на руке — по нему место и торопится с ходом. */
-            fun lowestDouble(seat: Int): Int? =
-                hands[seat].filter { it.isDouble }.minOfOrNull { it.high }
+            fun lowestDouble(seat: Int): Int? = hands[seat].lowestDouble()?.high
 
             val withDouble = hands.indices.filter { lowestDouble(it) != null }
             if (withDouble.isNotEmpty()) {

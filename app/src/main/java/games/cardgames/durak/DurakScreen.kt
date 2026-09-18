@@ -723,7 +723,7 @@ private fun ownMovePhrase(move: DurakMove): String = when (move) {
 
 private fun finishPhrase(game: DurakGame, score: Score, bot: String = "Бот"): String {
     // Про соперника — в настоящем времени: «Меркурий вышел» верно только
-    // для мужского имени, а имя игрок выбирает любое (SETTINGS.md, 7).
+    // для мужского имени, а имя игрок выбирает любое (SETTINGS.md, 8).
     val result = when (game.winner) {
         PLAYER -> "Ты вышел. $bot — дурак."
         BOT -> "$bot выходит, у тебя остались карты. Ты дурак."
