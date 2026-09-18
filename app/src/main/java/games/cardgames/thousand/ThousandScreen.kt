@@ -391,7 +391,7 @@ fun ThousandScreen(
             // Ждём не «полсекунды», а пока договорит предыдущая фраза: иначе
             // бот перебивает сам себя и слышно только последнее слово.
             delay(voice.waitMs())
-            val move = ThousandBot.chooseMove(round, BOT, settings.difficulty, rng) ?: break
+            val move = ThousandBot.chooseMove(round, BOT, settings.botDifficultyThousand, rng) ?: break
             val tricksBefore = round.tricksPlayed().size
             soundFor(move)
             val phrase = botPhrase(

@@ -35,6 +35,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_DURAK
+import games.cardgames.GAME_THOUSAND
+import games.cardgames.durak.DURAK_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
 import games.cardgames.score.Score
@@ -42,6 +45,7 @@ import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.engine.durak.Difficulty
 
 /** Образец речи: по нему игрок и выбирает голос — на слух, а не по названию. */
 private const val SAMPLE = "Так будет звучать игра. Козырь — пики, у тебя семёрка червей."
@@ -75,6 +79,13 @@ private fun sampleFor(index: Int, total: Int, hint: String?): String = buildStri
 /**
  * Настройки: всё, что можно включить, выключить или выбрать.
  *
+ * Экран один на всё приложение, а игр две, поэтому первым делом он знает,
+ * чьи настройки показывает: [game] — игра, из-за стола которой пришли.
+ * Её правила и её соперник стоят наверху, а ниже идёт общее — то, что
+ * одинаково за любым столом. Пришли из главного меню ([game] равен null) —
+ * на экране только общее: правила игры показывают за её столом, в общем
+ * списке они только путали (SETTINGS.md, 2).
+ *
  * Голоса выбираются на слух: название голоса в системе —
  * «ru-ru-x-ruf-network», человеку оно ничего не говорит. Поэтому выбор
  * открывает список целиком, а каждый выбор сразу звучит образцом.
@@ -83,7 +94,7 @@ private fun sampleFor(index: Int, total: Int, hint: String?): String = buildStri
  * много, а найти среди них нужный перебором нельзя.
  */
 @Composable
-fun SettingsScreen(onExit: () -> Unit) {
+fun SettingsScreen(game: String?, onExit: () -> Unit) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
@@ -248,6 +259,45 @@ fun SettingsScreen(onExit: () -> Unit) {
         Text("Настройки", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
 
+        // --- Эта игра ------------------------------------------------------
+
+        // Первым — то, ради чего за столом и лезут в настройки: с кем играть
+        // и по каким правилам. Строки правил приходят от самой игры, а не
+        // написаны здесь: экран один на всё приложение, и третья игра принесёт
+        // сюда свой список, а не ещё один экран (SETTINGS.md, 2).
+        if (game != null) {
+            Text(gameTitle(game), style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            SettingButton("Соперник: ${botDifficulty(game, settings).title}") {
+                val next = botDifficulty(game, settings).next()
+                save(
+                    if (game == GAME_THOUSAND) {
+                        settings.copy(botDifficultyThousand = next)
+                    } else {
+                        settings.copy(botDifficultyDurak = next)
+                    },
+                )
+                announce("Соперник: ${next.title}.")
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                if (game == GAME_THOUSAND) "Договорённости сторон" else "Правила стола",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            val gameSettings = remember { GameSettingStore(context) }
+            val rules = if (game == GAME_THOUSAND) THOUSAND_SETTINGS else DURAK_SETTINGS
+            rules.forEach { setting ->
+                GameSettingRow(setting, gameSettings) { announce(it) }
+            }
+
+            Spacer(Modifier.height(16.dp))
+        }
+
         // --- Речь ---------------------------------------------------------
 
         Text("Речь", style = MaterialTheme.typography.titleMedium)
@@ -375,34 +425,20 @@ fun SettingsScreen(onExit: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // --- Игра ----------------------------------------------------------
+        // --- Общее ---------------------------------------------------------
 
-        Text("Игра", style = MaterialTheme.typography.titleMedium)
+        // Общее — про приложение, а не про игру: за любым столом оно одно и
+        // то же, поэтому стоит ниже игрового и ни у одной игры не повторяется.
+        // Соперник и правила живут выше, в блоке своей игры, а из главного
+        // меню их не видно совсем: там про приложение (SETTINGS.md, 2).
+
+        Text("Общее", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
-
-        SettingButton("Соперник: ${settings.difficulty.title}") {
-            val next = settings.difficulty.next()
-            save(settings.copy(difficulty = next))
-            announce("Соперник: ${next.title}.")
-        }
 
         SettingButton("Порядок карт: ${settings.order.title}") {
             val next = settings.order.next()
             save(settings.copy(order = next))
             announce("Порядок карт: ${next.title}.")
-        }
-
-        SettingSwitch("Перевод карты — переводной дурак", settings.transfer) { value ->
-            save(settings.copy(transfer = value))
-            announce(
-                if (value) {
-                    "Перевод включён: защищающийся может перевести карту соседу. " +
-                        "Действует со следующей раздачи."
-                } else {
-                    "Перевод выключен: подкидной дурак, защищающийся только отбивается или берёт. " +
-                        "Действует со следующей раздачи."
-                },
-            )
         }
 
         SettingSwitch("Крупные карты и шрифт", settings.largeText) { value ->
@@ -419,21 +455,6 @@ fun SettingsScreen(onExit: () -> Unit) {
                     "Автосохранение выключено. Выйдешь посреди партии — начнёшь заново."
                 },
             )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // --- Договорённости сторон -----------------------------------------
-
-        // Строки этой группы приходят от самой игры, а не написаны здесь:
-        // экран настроек один на всё приложение, и третья игра приносит свой
-        // список, а не ещё один экран (SETTINGS.md, 2).
-        Text("Тысяча. Договорённости сторон", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-
-        val gameSettings = remember { GameSettingStore(context) }
-        THOUSAND_SETTINGS.forEach { setting ->
-            GameSettingRow(setting, gameSettings) { announce(it) }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -529,6 +550,13 @@ private fun VoiceOption(label: String, selected: Boolean, onClick: () -> Unit) {
         )
     }
 }
+
+/** Название игры в шапке её блока: то же, что на экране самой игры. */
+private fun gameTitle(game: String): String = if (game == GAME_DURAK) "Дурак" else "Тысяча"
+
+/** Соперник той игры, чьи настройки открыты: у каждой игры он свой. */
+private fun botDifficulty(game: String, settings: Settings): Difficulty =
+    if (game == GAME_DURAK) settings.botDifficultyDurak else settings.botDifficultyThousand
 
 /** Объяснить выбранный режим словами: «авто» само по себе ничего не говорит. */
 private fun whoSpeaksPhrase(mode: VoiceMode): String = when (mode) {

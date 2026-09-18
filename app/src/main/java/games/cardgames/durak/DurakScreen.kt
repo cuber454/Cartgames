@@ -258,7 +258,9 @@ fun DurakScreen(
     }
 
     fun newGame() {
-        session.restart(transferAllowed = settings.transfer)
+        // Правила раздачи — из игровых настроек «Дурака», а не из общих:
+        // переводной или подкидной решается за этим столом (SETTINGS.md, 2).
+        session.restart(transferAllowed = durakTransferAllowed(context))
         if (settings.sounds) sounds.deal()
         // Сигнал начала идёт вместе с шорохом раздачи, а не после него:
         // ноты и шум не перекрывают друг друга на слух, а разведённые по
@@ -288,13 +290,13 @@ fun DurakScreen(
             // Ждём не «полсекунды», а пока договорит предыдущая фраза:
             // иначе бот перебивает сам себя и слышно только последнее слово.
             delay(voice.waitMs())
-            val move = BotPlayer.chooseMove(game, BOT, settings.difficulty, rng) ?: break
+            val move = BotPlayer.chooseMove(game, BOT, settings.botDifficultyDurak, rng) ?: break
             soundFor(move)
             // Фразу спрашиваем до хода: «последняя карта» и «колода вышла» —
             // это про состояние до него, после хода карта уже не последняя.
             val line = talker.line(
                 move = move,
-                difficulty = settings.difficulty,
+                difficulty = settings.botDifficultyDurak,
                 trumpSuit = game.trumpSuit,
                 tableEmpty = game.table.isEmpty(),
                 ownHandSize = game.handOf(BOT).size,

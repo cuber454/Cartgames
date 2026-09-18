@@ -119,15 +119,17 @@ data class Settings(
     val vibration: Boolean = true,
     /** И толчок на собственный ход: карта легла. */
     val ownVibration: Boolean = true,
-    val difficulty: Difficulty = Difficulty.NORMAL,
-    val order: HandOrder = HandOrder.BY_SUIT,
     /**
-     * Перевод в «Дураке»: защищающийся кладёт карту того же достоинства и
-     * передаёт атаку соседу. Выключенный — «подкидной» дурак. Настройка
-     * берётся в момент раздачи: партия помнит, по каким правилам её начали,
-     * и переключение посреди неё ход не меняет.
+     * Соперник — свой у каждой игры.
+     *
+     * Раньше он был один на приложение, и это оказалось неверно: в «Дураке»
+     * и в «Тысяче» сила бота значит разное, и, поставив сложного в одной
+     * игре, игрок получал его же во второй, где заказывать труднее. Теперь
+     * настройка у каждой игры своя — как голос бота.
      */
-    val transfer: Boolean = true,
+    val botDifficultyDurak: Difficulty = Difficulty.NORMAL,
+    val botDifficultyThousand: Difficulty = Difficulty.NORMAL,
+    val order: HandOrder = HandOrder.BY_SUIT,
     /**
      * Игра, в которую играли последней. По ней в главном меню появляется
      * кнопка быстрого входа: за стол возвращаются чаще, чем заглядывают в
@@ -159,9 +161,18 @@ private const val KEY_SOUNDS = "sounds"
 private const val KEY_SIGNALS = "signals"
 private const val KEY_VIBRATION = "vibration"
 private const val KEY_OWN_VIBRATION = "own_vibration"
-private const val KEY_DIFFICULTY = "difficulty"
+private const val KEY_BOT_DIFFICULTY_DURAK = "durak.difficulty"
+private const val KEY_BOT_DIFFICULTY_THOUSAND = "thousand.difficulty"
 private const val KEY_ORDER = "order"
-private const val KEY_TRANSFER = "transfer"
+
+/**
+ * Ключи из версий до 0.9: тогда и соперник, и перевод были одни на всё
+ * приложение. Настройки переехали в игровой слой, а старые ключи остались
+ * читаться — иначе игрок, поставивший сложного соперника или выключивший
+ * перевод, после обновления нашёл бы их сброшенными в умолчание. Молча.
+ */
+private const val LEGACY_KEY_DIFFICULTY = "difficulty"
+internal const val LEGACY_KEY_TRANSFER = "transfer"
 private const val KEY_LAST_GAME = "last_game"
 private const val KEY_LARGE = "large_text"
 private const val KEY_AUTOSAVE = "autosave"
@@ -182,13 +193,11 @@ fun loadSettings(context: Context): Settings {
         signals = prefs.getBoolean(KEY_SIGNALS, true),
         vibration = prefs.getBoolean(KEY_VIBRATION, true),
         ownVibration = prefs.getBoolean(KEY_OWN_VIBRATION, true),
-        difficulty = prefs.getString(KEY_DIFFICULTY, null)
-            ?.let { name -> runCatching { Difficulty.valueOf(name) }.getOrNull() }
-            ?: Difficulty.NORMAL,
+        botDifficultyDurak = readDifficulty(prefs, KEY_BOT_DIFFICULTY_DURAK),
+        botDifficultyThousand = readDifficulty(prefs, KEY_BOT_DIFFICULTY_THOUSAND),
         order = prefs.getString(KEY_ORDER, null)
             ?.let { name -> runCatching { HandOrder.valueOf(name) }.getOrNull() }
             ?: HandOrder.BY_SUIT,
-        transfer = prefs.getBoolean(KEY_TRANSFER, true),
         lastGame = prefs.getString(KEY_LAST_GAME, null) ?: "durak",
         largeText = prefs.getBoolean(KEY_LARGE, false),
         autosave = prefs.getBoolean(KEY_AUTOSAVE, true),
@@ -206,6 +215,16 @@ private fun readRate(prefs: SharedPreferences): Float =
         else -> 1.0f
     }
 
+/**
+ * Соперник из хранилища: сперва свой ключ игры, а если его ещё нет — общий
+ * ключ версий до 0.9. Обе игры получают из него то же значение, которое
+ * было у игрока до обновления, и выбор не теряется.
+ */
+private fun readDifficulty(prefs: SharedPreferences, key: String): Difficulty =
+    (prefs.getString(key, null) ?: prefs.getString(LEGACY_KEY_DIFFICULTY, null))
+        ?.let { name -> runCatching { Difficulty.valueOf(name) }.getOrNull() }
+        ?: Difficulty.NORMAL
+
 fun saveSettings(context: Context, settings: Settings) {
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .edit()
@@ -220,9 +239,9 @@ fun saveSettings(context: Context, settings: Settings) {
         .putBoolean(KEY_SIGNALS, settings.signals)
         .putBoolean(KEY_VIBRATION, settings.vibration)
         .putBoolean(KEY_OWN_VIBRATION, settings.ownVibration)
-        .putString(KEY_DIFFICULTY, settings.difficulty.name)
+        .putString(KEY_BOT_DIFFICULTY_DURAK, settings.botDifficultyDurak.name)
+        .putString(KEY_BOT_DIFFICULTY_THOUSAND, settings.botDifficultyThousand.name)
         .putString(KEY_ORDER, settings.order.name)
-        .putBoolean(KEY_TRANSFER, settings.transfer)
         .putString(KEY_LAST_GAME, settings.lastGame)
         .putBoolean(KEY_LARGE, settings.largeText)
         .putBoolean(KEY_AUTOSAVE, settings.autosave)

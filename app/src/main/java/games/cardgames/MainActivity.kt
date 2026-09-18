@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
+import games.cardgames.durak.durakTransferAllowed
 import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
 import games.cardgames.rules.thousandRules
@@ -123,7 +124,12 @@ private fun App() {
             onRules = { openRules("thousand", GAME_THOUSAND) },
         )
 
-        "settings" -> SettingsScreen(onExit = { screen = settingsBack })
+        // Чьи настройки открывать: из меню — только общие, из-за стола —
+        // с правилами и соперником этой игры (SETTINGS.md, 2).
+        "settings" -> SettingsScreen(
+            game = settingsBack.takeIf { it != "menu" },
+            onExit = { screen = settingsBack },
+        )
 
         "rules" -> if (rulesGame == GAME_THOUSAND) {
             RulesScreen(title = "Тысяча", sections = thousandRules, onExit = { screen = rulesBack })
@@ -211,12 +217,12 @@ private fun GamesScreen(
 
         if (paused) {
             Spacer(Modifier.height(8.dp))
-            // Раздача берёт режим из настроек: перевод можно выключить
+            // Раздача берёт режим из правил «Дурака»: перевод можно выключить
             // («подкидной» дурак) — тогда новая партия идёт без него.
             Button(
                 onClick = {
                     saveSettings(context, settings.copy(lastGame = GAME_DURAK))
-                    session.restart(transferAllowed = settings.transfer)
+                    session.restart(transferAllowed = durakTransferAllowed(context))
                     onDurak()
                 },
                 modifier = Modifier.fillMaxWidth(),

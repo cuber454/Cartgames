@@ -46,7 +46,17 @@ class GameSettingStore(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun value(setting: GameSetting): Boolean = prefs.getBoolean(setting.key, setting.default)
+    /**
+     * [legacyKey] — ключ, под которым настройка лежала до переезда в игровой
+     * слой: пока своего ключа у неё нет, ответ берётся оттуда. Иначе игрок,
+     * выключивший настройку до обновления, нашёл бы её включённой — решение
+     * потерялось бы молча (SETTINGS.md, 2).
+     */
+    fun value(setting: GameSetting, legacyKey: String? = null): Boolean =
+        prefs.getBoolean(
+            setting.key,
+            legacyKey?.let { prefs.getBoolean(it, setting.default) } ?: setting.default,
+        )
 
     fun set(setting: GameSetting, value: Boolean) {
         prefs.edit().putBoolean(setting.key, value).apply()
