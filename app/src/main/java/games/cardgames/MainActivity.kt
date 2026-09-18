@@ -35,8 +35,12 @@ import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
 import games.cardgames.durak.loadDurakRules
+import games.cardgames.kozel.KozelScreen
+import games.cardgames.kozel.KozelSession
+import games.cardgames.kozel.loadKozelRules
 import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
+import games.cardgames.rules.kozelRules
 import games.cardgames.rules.thousandRules
 import games.cardgames.thousand.ThousandScreen
 import games.cardgames.thousand.ThousandSession
@@ -101,6 +105,7 @@ private fun App() {
     // и недоигранная тысяча друг о друге не знают.
     val session = remember { DurakSession(context) }
     val thousand = remember { ThousandSession(context) }
+    val kozel = remember { KozelSession(context) }
 
     // Что видит скринридер на открывшемся экране — в журнал. Это ответ на
     // «кнопка есть, а он её не читает»: в записи видно каждое имя, которое до
@@ -141,8 +146,10 @@ private fun App() {
         "games" -> GamesScreen(
             session = session,
             thousand = thousand,
+            kozel = kozel,
             onDurak = { screen = "durak" },
             onThousand = { screen = "thousand" },
+            onKozel = { screen = "kozel" },
             onBack = { screen = "menu" },
         )
 
@@ -160,6 +167,13 @@ private fun App() {
             onRules = { openRules("thousand", GAME_THOUSAND) },
         )
 
+        "kozel" -> KozelScreen(
+            session = kozel,
+            onExit = { screen = "games" },
+            onSettings = { openSettings("kozel") },
+            onRules = { openRules("kozel", GAME_KOZEL) },
+        )
+
         // Чьи настройки открывать: из меню — только общие, из-за стола —
         // с правилами и соперником этой игры (SETTINGS.md, 2).
         "settings" -> SettingsScreen(
@@ -167,17 +181,33 @@ private fun App() {
             onExit = { screen = settingsBack },
         )
 
-        "rules" -> if (rulesGame == GAME_THOUSAND) {
-            RulesScreen(title = "Тысяча", sections = thousandRules, onExit = { screen = rulesBack })
-        } else {
-            RulesScreen(title = "Дурак", sections = durakRules, onExit = { screen = rulesBack })
+        "rules" -> when (rulesGame) {
+            GAME_KOZEL -> RulesScreen(
+                title = "Козёл",
+                sections = kozelRules,
+                onExit = { screen = rulesBack },
+            )
+
+            GAME_THOUSAND -> RulesScreen(
+                title = "Тысяча",
+                sections = thousandRules,
+                onExit = { screen = rulesBack },
+            )
+
+            else -> RulesScreen(
+                title = "Дурак",
+                sections = durakRules,
+                onExit = { screen = rulesBack },
+            )
         }
 
         else -> MenuScreen(
             session = session,
             thousand = thousand,
+            kozel = kozel,
             onDurak = { screen = "durak" },
             onThousand = { screen = "thousand" },
+            onKozel = { screen = "kozel" },
             onGames = { screen = "games" },
             onSettings = { openSettings("menu") },
         )
@@ -188,15 +218,18 @@ private fun App() {
  * Игры: то, во что здесь можно играть.
  *
  * Отдельным экраном, а не кнопками в главном меню, потому что игры
- * прибывают: «Тысяча» уже на подходе, за ней пойдут следующие. В главном
- * меню такой список рано или поздно вытеснил бы всё остальное.
+ * прибывают: за «Дураком» пришли «Тысяча» и «Козёл», за ними пойдут
+ * следующие. В главном меню такой список рано или поздно вытеснил бы
+ * всё остальное.
  */
 @Composable
 private fun GamesScreen(
     session: DurakSession,
     thousand: ThousandSession,
+    kozel: KozelSession,
     onDurak: () -> Unit,
     onThousand: () -> Unit,
+    onKozel: () -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -217,6 +250,10 @@ private fun GamesScreen(
     val paused = session.restored || (session.lastPhrase.isNotBlank() && !session.game.finished)
     val thousandPaused = thousand.restored ||
         (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
+    // В «Козле» на диске лежит матч, а не раунд: не доигран он, пока в нём
+    // никто не набрал до цели.
+    val kozelPaused = kozel.restored ||
+        (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
 
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
 
@@ -225,8 +262,9 @@ private fun GamesScreen(
         val tail = buildString {
             if (paused) append(" Партия в дурака не доиграна, можно продолжить.")
             if (thousandPaused) append(" Партия в тысячу не доиграна, можно продолжить.")
+            if (kozelPaused) append(" Партия в козла не доиграна, можно продолжить.")
         }
-        speaker.say("Игры. Дурак, тысяча.$tail")
+        speaker.say("Игры. Дурак, тысяча, козёл.$tail")
     }
 
     Column(
@@ -292,6 +330,34 @@ private fun GamesScreen(
             }
         }
 
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                saveSettings(context, settings.copy(lastGame = GAME_KOZEL))
+                onKozel()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (kozelPaused) "Козёл — продолжить партию" else "Козёл — игра против соперника")
+        }
+
+        if (kozelPaused) {
+            Spacer(Modifier.height(8.dp))
+            // Договорённости берём из настроек «Козла»: пусто-пусто считается
+            // по-разному в разных компаниях, и решается это до раздачи.
+            Button(
+                onClick = {
+                    saveSettings(context, settings.copy(lastGame = GAME_KOZEL))
+                    kozel.restart(rules = loadKozelRules(context))
+                    onKozel()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Козёл — новая партия")
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
         Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
     }
@@ -309,8 +375,10 @@ private fun GamesScreen(
 private fun MenuScreen(
     session: DurakSession,
     thousand: ThousandSession,
+    kozel: KozelSession,
     onDurak: () -> Unit,
     onThousand: () -> Unit,
+    onKozel: () -> Unit,
     onGames: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -334,7 +402,9 @@ private fun MenuScreen(
     val paused = session.restored || (session.lastPhrase.isNotBlank() && !session.game.finished)
     val thousandPaused = thousand.restored ||
         (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
-    val anyPaused = paused || thousandPaused
+    val kozelPaused = kozel.restored ||
+        (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
+    val anyPaused = paused || thousandPaused || kozelPaused
 
     // Кто говорит: приложение или скринридер. В каждый момент — ровно один.
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
@@ -363,20 +433,33 @@ private fun MenuScreen(
         // Последняя игра — первой строкой: за стол возвращаются чаще, чем
         // заглядывают в список игр, и лезть ради этого в подменю ни к чему.
         // Список игр остаётся ниже — им выбирают, когда хочется другой игры.
-        if (settings.lastGame == GAME_THOUSAND) {
-            Button(onClick = onThousand, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    if (thousandPaused) "Продолжить партию в тысячу" else "Тысяча — игра против соперника",
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-        } else {
-            Button(onClick = onDurak, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    if (paused) "Продолжить партию в дурака" else "Дурак — игра против соперника",
-                )
-            }
-            Spacer(Modifier.height(8.dp))
+        when (settings.lastGame) {
+            GAME_KOZEL -> LastGameButton(
+                label = if (kozelPaused) {
+                    "Продолжить партию в козла"
+                } else {
+                    "Козёл — игра против соперника"
+                },
+                onClick = onKozel,
+            )
+
+            GAME_THOUSAND -> LastGameButton(
+                label = if (thousandPaused) {
+                    "Продолжить партию в тысячу"
+                } else {
+                    "Тысяча — игра против соперника"
+                },
+                onClick = onThousand,
+            )
+
+            else -> LastGameButton(
+                label = if (paused) {
+                    "Продолжить партию в дурака"
+                } else {
+                    "Дурак — игра против соперника"
+                },
+                onClick = onDurak,
+            )
         }
 
         // Игры — отдельным разделом: сами игры живут на своём экране,
@@ -398,4 +481,17 @@ private fun MenuScreen(
             Text("Настройки — речь, звук, журнал")
         }
     }
+}
+
+/**
+ * Кнопка последней игры.
+ *
+ * Одна на все игры: ветки выбора различаются только подписью и тем, куда
+ * ведут, а сама кнопка везде одна и та же. Разложи её по веткам — и правка
+ * кнопки станет правкой в трёх местах, из которых одно забудут.
+ */
+@Composable
+private fun LastGameButton(label: String, onClick: () -> Unit) {
+    Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    Spacer(Modifier.height(8.dp))
 }

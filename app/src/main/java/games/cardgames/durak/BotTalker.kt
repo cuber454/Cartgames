@@ -1,18 +1,11 @@
 package games.cardgames.durak
 
+import games.cardgames.speech.BotLine
+import games.cardgames.speech.PhraseBag
 import games.engine.Suit
 import games.engine.durak.Difficulty
 import games.engine.durak.DurakMove
 import kotlin.random.Random
-
-/**
- * Что бот скажет на своём ходу.
- *
- * [text] — реплика целиком; её же повторит кнопка «Повтори», если игрок не
- * расслышал. `speak = false` значит «промолчать»: звук карты сыграет, а слов
- * не будет. Реплика при этом не теряется — повторить её можно всегда.
- */
-data class BotLine(val text: String, val speak: Boolean)
 
 /** Повод для реплики. От него зависит и набор зачинов, и право промолчать. */
 private enum class Reason { LEAD, TOSS, LAST, ENDGAME, BEAT, TRUMP_BEAT, TRANSFER, TAKE, TAKE_CLEVER, PASS }
@@ -79,10 +72,7 @@ private const val QUIET_ODDS = 8
 class BotTalker(private val rng: Random = Random.Default) {
 
     /** Мешки зачинов: внутри перемешаны, тянем без возврата. */
-    private val bags = mutableMapOf<Reason, MutableList<String>>()
-
-    /** Что выпало последним в каждой группе — чтобы не пойти снова на стыке. */
-    private val lastPick = mutableMapOf<Reason, String>()
+    private val bag = PhraseBag<Reason>(rng)
 
     /** Прошлый ход бот промолчал: два раза подряд молчать нельзя. */
     private var wasSilent = false
@@ -138,20 +128,6 @@ class BotTalker(private val rng: Random = Random.Default) {
         return BotLine(draw(reason), speak = true)
     }
 
-    /**
-     * Зачин из группы. Мешок кончился — набираем заново и следим, чтобы
-     * первым не выпал тот же зачин, которым кончился прошлый мешок.
-     */
-    private fun draw(reason: Reason): String {
-        val bag = bags.getOrPut(reason) { mutableListOf() }
-        if (bag.isEmpty()) {
-            bag += PHRASES.getValue(reason).shuffled(rng)
-            if (bag.size > 1 && bag[0] == lastPick[reason]) {
-                val first = bag[0]
-                bag[0] = bag[1]
-                bag[1] = first
-            }
-        }
-        return bag.removeAt(0).also { lastPick[reason] = it }
-    }
+    /** Зачин из группы: мешок общий на все игры, повод — свой у каждой. */
+    private fun draw(reason: Reason): String = bag.draw(reason, PHRASES.getValue(reason))
 }

@@ -1,6 +1,7 @@
 package games.cardgames.speech
 
 import games.engine.Card
+import games.engine.tiles.Tile
 
 /**
  * Подходит ли карта сейчас: `true` — можно сыграть, `false` — нельзя,
@@ -34,3 +35,14 @@ fun spokenVerdict(playable: Boolean?): String = when (playable) {
 
 /** Вердикт по карте, до которой игрок дошёл пальцем или пальцем по экрану. */
 fun cardVerdict(card: Card, playable: Set<Card>): String = spokenVerdict(verdictOf(card, playable))
+
+/**
+ * То же для костей: рука в «Козле» листается так же, и вердикт ей нужен тот
+ * же. Правило здесь одно на все игры — иначе про одну и ту же кость игрок
+ * услышал бы в двух местах разное.
+ */
+fun verdictOf(tile: Tile, playable: Set<Tile>): Boolean? =
+    if (playable.isEmpty()) null else tile in playable
+
+/** Вердикт по кости, до которой игрок дошёл пальцем или жестом. */
+fun tileVerdict(tile: Tile, playable: Set<Tile>): String = spokenVerdict(verdictOf(tile, playable))

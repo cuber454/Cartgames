@@ -9,3 +9,6 @@ local.properties
 dist/
 *.apk
 
+# Сессии компилятора Kotlin: след локального прогона тестов, не исходник
+.kotlin/
+
