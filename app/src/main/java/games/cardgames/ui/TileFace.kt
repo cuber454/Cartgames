@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -52,6 +53,11 @@ fun TileFace(
     Box(
         modifier = modifier
             .size(width, height)
+            // Кость лежит на столе, а не нарисована на нём: лёгкая тень
+            // отделяет её от фона и от соседней кости. Контраста она не
+            // трогает — точки и рамка остаются чёрными по бумаге: за этим
+            // столом играют и те, кому видно плохо.
+            .shadow(1.5.dp, shape)
             .background(TilePaper, shape)
             .border(2.dp, TileEdge, shape)
             .clearAndSetSemantics {},

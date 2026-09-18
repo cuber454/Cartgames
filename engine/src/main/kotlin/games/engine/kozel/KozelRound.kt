@@ -29,6 +29,17 @@ sealed interface KozelMove : Move {
     data class Place(val tile: Tile, val end: End) : KozelMove
 
     /**
+     * Положить оба дубля разом: [left] на левый конец, [right] на правый.
+     *
+     * Так можно, только когда концы показывают разные числа и на руке лежит
+     * дубль к каждому из них (см. [bothDoubles]): дубль идёт к своему числу,
+     * и другого числа у него нет, поэтому спутать концы нечем. Ход
+     * необязательный — каждый из этих дублей кладётся и порознь, обычным
+     * [Place].
+     */
+    data class PlaceBoth(val left: Tile, val right: Tile) : KozelMove
+
+    /**
      * Взять одну кость из базара.
      *
      * Один ход — одна кость, а не «тянуть, пока не найдёшь»: так ход
@@ -131,14 +142,12 @@ class KozelRound private constructor(
      *
      * Подходящая кость есть — ходить обязательно ею, брать из базара нельзя.
      * Подходящих нет — берём из базара, пока он не пуст; пуст — пропускаем.
+     * Считает их [movesFor] — тот же код, что и у бота: разойтись этим двум
+     * нельзя.
      */
     fun legalMoves(seat: Int): List<KozelMove> {
         if (finished || seat != turnSeat) return emptyList()
-
-        val places = line.placements(hands[seat])
-        if (places.isNotEmpty()) return places
-
-        return if (bazaar.isNotEmpty()) listOf(KozelMove.Draw) else listOf(KozelMove.Pass)
+        return line.movesFor(hands[seat], bazaar.size)
     }
 
     fun apply(seat: Int, move: KozelMove) {
@@ -150,6 +159,26 @@ class KozelRound private constructor(
                 require(hands[seat].remove(move.tile)) { "кости ${move.tile.spoken()} нет на руке" }
                 line = line.place(move.tile, move.end)
                 // Кость легла — счёт пропусков начинается заново.
+                passesCount = 0
+                if (hands[seat].isEmpty()) {
+                    out = seat
+                    return
+                }
+                turnSeat = other(seat)
+            }
+
+            is KozelMove.PlaceBoth -> {
+                require(hands[seat].remove(move.left)) {
+                    "кости ${move.left.spoken()} нет на руке"
+                }
+                require(hands[seat].remove(move.right)) {
+                    "кости ${move.right.spoken()} нет на руке"
+                }
+                // Слева направо: сначала левый конец, потом правый. Порядок
+                // здесь ни на что не влияет — оба дубля оставляют свой конец
+                // прежним, — но так линия собирается в том же порядке, в
+                // каком читается.
+                line = line.place(move.left, End.LEFT).place(move.right, End.RIGHT)
                 passesCount = 0
                 if (hands[seat].isEmpty()) {
                     out = seat
@@ -243,6 +272,9 @@ class KozelRound private constructor(
     /** Фраза про только что сделанный ход. */
     override fun describe(state: KozelRound, seat: Int, move: Move): String = when (move) {
         is KozelMove.Place -> "Кость ${move.tile.spoken()} ${move.end.title}."
+        is KozelMove.PlaceBoth ->
+            "Две кости: ${move.left.spoken()} ${End.LEFT.title}, " +
+                "${move.right.spoken()} ${End.RIGHT.title}."
         KozelMove.Draw -> "Взято из базара."
         KozelMove.Pass -> "Ход пропущен."
         else -> "Ход сделан."
@@ -265,7 +297,7 @@ class KozelRound private constructor(
 
         /**
          * Новая раздача: набор тасуется, по семь костей каждому, остальные
-         * четырнадцать — закрытый базар. Первым ходит тот, у кого старший
+         * четырнадцать — закрытый базар. Первым ходит тот, у кого младший
          * дубль; дублей ни у кого нет — у кого старшая кость по сумме точек.
          */
         fun deal(
@@ -315,19 +347,28 @@ class KozelRound private constructor(
         /**
          * Кто начинает раунд.
          *
-         * Старший дубль: шесть-шесть, потом пять-пять и так далее. Дублей
-         * ни у кого нет — старшая кость по сумме точек; при равной сумме
-         * смотрим на старшую половину, а если и она равна, берёт тот, кто
-         * за столом младше по месту. Полное равенство возможно: шесть-три
-         * и пять-четыре стоят одинаково, а сдать их может обоим.
+         * Младший дубль: пусто-пусто, потом один-один и так далее — чей
+         * дубль младше, тот и ходит первым. Дублей ни у кого нет — старшая
+         * кость по сумме точек; при равной сумме смотрим на старшую
+         * половину, а если и она равна, берёт тот, кто за столом младше по
+         * месту. Полное равенство возможно: шесть-три и пять-четыре стоят
+         * одинаково, а сдать их может обоим.
          */
         fun openerSeat(hands: List<List<Tile>>): Int {
-            fun rank(seat: Int): Pair<Int, Int> {
-                val doubles = hands[seat].filter { it.isDouble }
-                if (doubles.isNotEmpty()) {
-                    val best = doubles.maxOf { it.high }
-                    return best to 99
+            /** Младший дубль на руке — по нему место и торопится с ходом. */
+            fun lowestDouble(seat: Int): Int? =
+                hands[seat].filter { it.isDouble }.minOfOrNull { it.high }
+
+            val withDouble = hands.indices.filter { lowestDouble(it) != null }
+            if (withDouble.isNotEmpty()) {
+                var best = withDouble.first()
+                for (seat in withDouble) {
+                    if (lowestDouble(seat)!! < lowestDouble(best)!!) best = seat
                 }
+                return best
+            }
+
+            fun rank(seat: Int): Pair<Int, Int> {
                 val best = hands[seat].maxByOrNull { it.pips }
                 return (best?.pips ?: 0) to (best?.high ?: 0)
             }

@@ -31,12 +31,30 @@ class KozelRoundTest {
     }
 
     @Test
-    fun `первым ходит тот, у кого старший дубль`() {
+    fun `первым ходит тот, у кого младший дубль`() {
         val hands = listOf(
-            listOf(tile(0, 1), tile(2, 2)),
-            listOf(tile(3, 3), tile(4, 4)),
+            listOf(tile(0, 1), tile(4, 4)),
+            listOf(tile(3, 3), tile(2, 2)),
         )
         assertEquals(1, KozelRound.openerSeat(hands))
+    }
+
+    @Test
+    fun `пусто-пусто ходит раньше всех остальных дублей`() {
+        val hands = listOf(
+            listOf(tile(4, 4), tile(1, 1)),
+            listOf(tile(0, 0), tile(6, 6)),
+        )
+        assertEquals(1, KozelRound.openerSeat(hands))
+    }
+
+    @Test
+    fun `дубль на руке важнее любой кости без дубля`() {
+        val hands = listOf(
+            listOf(tile(5, 6), tile(5, 5)),
+            listOf(tile(0, 1), tile(2, 3)),
+        )
+        assertEquals(0, KozelRound.openerSeat(hands))
     }
 
     @Test
@@ -96,6 +114,39 @@ class KozelRoundTest {
 
         assertEquals(1, round.turn)
         assertFalse(round.finished)
+    }
+
+    @Test
+    fun `ход двумя дублями кладёт обе кости и передаёт ход`() {
+        val round = roundOf(
+            hands = listOf(listOf(tile(4, 4), tile(1, 1), tile(5, 6)), listOf(tile(2, 3))),
+            line = lineWithEnds(4, 1),
+        )
+
+        val both = KozelMove.PlaceBoth(tile(4, 4), tile(1, 1))
+        assertTrue(round.legalMoves(0).contains(both))
+
+        round.apply(0, both)
+
+        assertEquals(1, round.handSize(0))
+        assertEquals(3, round.tableSize)
+        // Дубли оставляют свои концы прежними: четвёрка слева, единица справа.
+        assertEquals(4, round.table.left)
+        assertEquals(1, round.table.right)
+        assertEquals(1, round.turn)
+    }
+
+    @Test
+    fun `двумя дублями выходят из раунда, если это последние кости`() {
+        val round = roundOf(
+            hands = listOf(listOf(tile(4, 4), tile(1, 1)), listOf(tile(2, 3), tile(5, 6))),
+            line = lineWithEnds(4, 1),
+        )
+
+        round.apply(0, KozelMove.PlaceBoth(tile(4, 4), tile(1, 1)))
+
+        assertTrue(round.finished)
+        assertEquals(0, round.winner)
     }
 
     @Test

@@ -169,3 +169,50 @@ fun Line.laid(): List<LaidTile> {
  */
 fun Line.placements(hand: List<Tile>): List<KozelMove.Place> =
     hand.flatMap { tile -> canPlay(tile).map { end -> KozelMove.Place(tile, end) } }
+
+/**
+ * Оба дубля разом — если по концам лежат их числа.
+ *
+ * Концы показывают разные числа, и к каждому на руке есть дубль: тогда за
+ * один ход можно выложить оба. Дубль идёт только к своему числу — четвёрка к
+ * четвёрке, единица к единице, — поэтому концы здесь не выбирают, а узнают:
+ * спутать их нечем.
+ *
+ * Пусто — такого хода нет: концы одинаковые (дубль к этому числу в наборе
+ * один, а второй приставить некуда), линия пуста, или к одному из концов
+ * дубля на руке не случилось.
+ *
+ * Ход необязательный: и тот и другой дубль кладутся поодиночке обычным
+ * [KozelMove.Place]. Это разрешение, а не обязанность (решение Катерины,
+ * 18.09).
+ */
+fun Line.bothDoubles(hand: List<Tile>): KozelMove.PlaceBoth? {
+    val leftEnd = left ?: return null
+    val rightEnd = right ?: return null
+    if (leftEnd == rightEnd) return null
+
+    val left = hand.firstOrNull { it.isDouble && it.high == leftEnd } ?: return null
+    val right = hand.firstOrNull { it.isDouble && it.high == rightEnd } ?: return null
+    return KozelMove.PlaceBoth(left, right)
+}
+
+/**
+ * Все ходы, доступные месту с рукой [hand] при базаре в [bazaarSize] костей.
+ *
+ * Одно место на всех — и для игрока, и для бота. Разойтись им нельзя: ходы
+ * бота считает [KozelView], ходы игрока — [KozelRound], и если правило
+ * осядет в одном из них, бот однажды сыграет то, чего игроку не предложили.
+ *
+ * Подходящая кость есть — ходить ею, и тогда к обычным приставлениям
+ * добавляется [Line.bothDoubles], если он возможен. Подходящих нет — берём из
+ * базара, пока он не пуст; пуст — пропускаем.
+ */
+fun Line.movesFor(hand: List<Tile>, bazaarSize: Int): List<KozelMove> {
+    val places = placements(hand)
+    if (places.isEmpty()) {
+        return if (bazaarSize > 0) listOf(KozelMove.Draw) else listOf(KozelMove.Pass)
+    }
+
+    val both = bothDoubles(hand)
+    return if (both == null) places else places + both
+}
