@@ -31,6 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.score.Outcome
@@ -576,13 +579,24 @@ fun DurakScreen(
             // Обе кнопки — вопрос игрока, а не событие за столом: он нажал
             // и ждёт ответа. Отвечаем своим голосом и в том случае, когда
             // за столом говорит скринридер.
-            Button(onClick = { voice.sayRequested(allowedPhrase()) }, modifier = Modifier.weight(1f)) {
-                Text("Что можно")
-            }
+            //
+            // Имя приклеено к самой кнопке, а не выведено из надписи внутри:
+            // из-за стола у незрячего игрока ровно эти две кнопки, и молчащая
+            // из них — тупик. Надпись остаётся для глаза, имя — для слуха;
+            // надпись поэтому закрыта от скринридера — иначе он прочитает
+            // одно и то же дважды.
+            Button(
+                onClick = { voice.sayRequested(allowedPhrase()) },
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { contentDescription = "Что можно" },
+            ) { Text("Что можно", modifier = Modifier.clearAndSetSemantics {}) }
             Button(
                 onClick = { voice.sayRequested(session.lastPhrase) },
-                modifier = Modifier.weight(1f),
-            ) { Text("Повтори") }
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { contentDescription = "Повтори" },
+            ) { Text("Повтори", modifier = Modifier.clearAndSetSemantics {}) }
         }
 
     }
