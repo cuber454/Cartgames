@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
 import games.cardgames.score.Score
+import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
@@ -422,6 +423,21 @@ fun SettingsScreen(onExit: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
+        // --- Договорённости сторон -----------------------------------------
+
+        // Строки этой группы приходят от самой игры, а не написаны здесь:
+        // экран настроек один на всё приложение, и третья игра приносит свой
+        // список, а не ещё один экран (SETTINGS.md, 2).
+        Text("Тысяча. Договорённости сторон", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+
+        val gameSettings = remember { GameSettingStore(context) }
+        THOUSAND_SETTINGS.forEach { setting ->
+            GameSettingRow(setting, gameSettings) { announce(it) }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
         // --- Счёт ----------------------------------------------------------
 
         SettingButton(if (resetAsked) "Нажми ещё раз — счёт обнулится" else "Сбросить счёт партий") {
@@ -530,6 +546,40 @@ private fun SettingButton(label: String, onClick: () -> Unit) {
             .padding(vertical = 4.dp),
     ) {
         Text(label)
+    }
+}
+
+/**
+ * Строка игровой настройки. Пояснение стоит под названием, а не прячется в
+ * подсказку: скринридер читает его вместе с названием и значением, и игрок
+ * слышит не «Самосвал, переключатель», а что это вообще такое.
+ */
+@Composable
+private fun GameSettingRow(
+    setting: GameSetting,
+    store: GameSettingStore,
+    onAnnounce: (String) -> Unit,
+) {
+    var value by remember(setting.key) { mutableStateOf(store.value(setting)) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(setting.title, style = MaterialTheme.typography.bodyLarge)
+            Text(setting.about, style = MaterialTheme.typography.bodyMedium)
+        }
+        Switch(
+            checked = value,
+            onCheckedChange = { next ->
+                value = next
+                store.set(setting, next)
+                onAnnounce(gameSettingPhrase(setting, next))
+            },
+        )
     }
 }
 

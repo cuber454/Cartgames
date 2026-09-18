@@ -143,7 +143,11 @@ data class Settings(
     val autosave: Boolean = true,
 )
 
-private const val PREFS = "settings"
+/**
+ * Файл настроек — один на приложение. Общие настройки кладут в него свои
+ * ключи, игровые — свои, с именем игры впереди (SETTINGS.md, 2).
+ */
+internal const val PREFS = "settings"
 private const val KEY_RATE = "rate"
 private const val KEY_ENGINE = "engine"
 private const val KEY_VOICE = "voice"

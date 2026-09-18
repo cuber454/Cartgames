@@ -817,6 +817,16 @@ private fun roundPhrase(
     parts += "Записано: ${writes.joinToString(", ")}."
 
     summary.bolted.forEach { parts += if (it == PLAYER) "Болт тебе." else "Болт боту." }
+    summary.raspisPenalised?.let {
+        parts += if (it == PLAYER) "Третья роспись — штраф 120." else "У бота третья роспись — штраф 120."
+    }
+    summary.samosvaled.forEach {
+        parts += if (it == PLAYER) {
+            "Самосвал: 555, и счёт сгорел — начинаешь с нуля."
+        } else {
+            "У бота самосвал: его счёт сгорел."
+        }
+    }
     summary.barrelSat?.let {
         parts += if (it == PLAYER) "Ты садишься на бочку." else "Бот садится на бочку."
     }
