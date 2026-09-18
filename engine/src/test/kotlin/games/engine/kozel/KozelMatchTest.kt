@@ -11,9 +11,9 @@ import kotlin.test.assertTrue
 /**
  * Матч: очки, цель и «козёл».
  *
- * В «Козле» очки записывает себе выигравший раздачу, поэтому счёт — это
- * счёт выигранных раздач, а не отыгранных. Отсюда и развязка: до ста одного
- * доходит тот, кто выиграл больше, а «козлом» остаётся второй.
+ * Очки в «Козле» штрафные: за раунд их записывают тому, кто его проиграл, —
+ * у кого остались на руке кости. Значит счёт — это счёт отыгранных раздач, и
+ * «козлом» становится тот, кто набрал больше всех.
  */
 class KozelMatchTest {
 
@@ -32,7 +32,7 @@ class KozelMatchTest {
     }
 
     @Test
-    fun `очки раунда достаются тому, кто его выиграл`() {
+    fun `очки раунда записываются тому, кто его проиграл`() {
         // Цель заведомо недостижимая: матч не должен кончиться на первом раунде.
         val match = KozelMatch(KozelRules(target = 10_000), Random(2))
         val random = Random(2)
@@ -55,10 +55,12 @@ class KozelMatchTest {
                 assertEquals(0, summary.points)
                 assertEquals(before, match.table)
             } else {
-                // Ноль тут не ошибка: у проигравшего могла остаться одна
-                // пусто-пусто, а она стоит ровно ничего.
-                assertEquals(before[winner] + summary.points, match.table[winner])
-                assertEquals(before[KozelRound.other(winner)], match.table[KozelRound.other(winner)])
+                // Записали проигравшему раунд — тому, у кого осталась рука.
+                // Ноль тут не ошибка: могла остаться одна пусто-пусто, а она
+                // стоит ровно ничего.
+                val payer = KozelRound.other(winner)
+                assertEquals(before[payer] + summary.points, match.table[payer])
+                assertEquals(before[winner], match.table[winner])
             }
 
             assertFalse(match.over)
@@ -68,7 +70,7 @@ class KozelMatchTest {
     }
 
     @Test
-    fun `кто первым дошёл до цели — тот выиграл, второй стал козлом`() {
+    fun `кто первым набрал до цели — тот козёл, матч за вторым`() {
         val target = 25
 
         for (seed in 0 until 8) {
@@ -83,11 +85,13 @@ class KozelMatchTest {
                 check(++rounds < 500) { "матч не кончается" }
             }
 
+            val goat = match.goat ?: error("матч кончился, а козла нет")
             val winner = match.matchWinner ?: error("матч кончился, а победителя нет")
-            assertTrue(match.table[winner] >= target, "победитель не дошёл до цели")
-            assertTrue(match.table[KozelRound.other(winner)] < target, "проигравший тоже дошёл до цели")
-            assertEquals(KozelRound.other(winner), match.goat, "козлом должен быть второй")
-            assertNotEquals(winner, match.goat)
+
+            assertTrue(match.table[goat] >= target, "козёл не дошёл до цели")
+            assertTrue(match.table[winner] < target, "победитель тоже дошёл до цели")
+            assertEquals(goat, KozelRound.other(winner), "козлом должен быть второй")
+            assertNotEquals(winner, goat)
             assertEquals(rounds, match.roundNumber, "номер раунда разошёлся с числом сыгранных")
         }
     }
