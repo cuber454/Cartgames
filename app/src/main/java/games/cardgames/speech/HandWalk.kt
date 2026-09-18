@@ -1,7 +1,6 @@
 package games.cardgames.speech
 
 import games.engine.Card
-import games.engine.tiles.Tile
 
 /**
  * Подходит ли карта сейчас: `true` — можно сыграть, `false` — нельзя,
@@ -36,13 +35,10 @@ fun spokenVerdict(playable: Boolean?): String = when (playable) {
 /** Вердикт по карте, до которой игрок дошёл пальцем или пальцем по экрану. */
 fun cardVerdict(card: Card, playable: Set<Card>): String = spokenVerdict(verdictOf(card, playable))
 
-/**
- * То же для костей: рука в «Козле» листается так же, и вердикт ей нужен тот
- * же. Правило здесь одно на все игры — иначе про одну и ту же кость игрок
- * услышал бы в двух местах разное.
- */
-fun verdictOf(tile: Tile, playable: Set<Tile>): Boolean? =
-    if (playable.isEmpty()) null else tile in playable
-
-/** Вердикт по кости, до которой игрок дошёл пальцем или жестом. */
-fun tileVerdict(tile: Tile, playable: Set<Tile>): String = spokenVerdict(verdictOf(tile, playable))
+// Костям эта функция не годится, и вердикт им считается иначе. Пустой набор
+// костей, которыми можно сходить, бывает и в свой ход: подходящих нет, и ход
+// ровно один — взять из базара. Это «ни одна не подходит» — то есть как раз
+// то, что игроку и надо услышать, — а не «решать нечего». Отличить одно от
+// другого по набору нельзя: очередь хода знает раунд, поэтому экран «Козла»
+// спрашивает его, а не набор ([spokenVerdict] ему всё равно нужен — врать
+// вслух про кость, которой ходить нельзя, игра не должна).
