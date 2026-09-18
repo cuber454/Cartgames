@@ -5,6 +5,7 @@ import games.cardgames.settings.Activation
 import games.cardgames.settings.GameSetting
 import games.cardgames.settings.GameSettingStore
 import games.cardgames.settings.LEGACY_KEY_TRANSFER
+import games.engine.durak.DurakRules
 
 /**
  * Правила стола в «Дураке»: то, о чём сговариваются до раздачи.
@@ -26,17 +27,39 @@ val TRANSFER = GameSetting(
     default = true,
 )
 
-val DURAK_SETTINGS: List<GameSetting> = listOf(TRANSFER)
+/**
+ * Кто ходит первым в новой партии.
+ *
+ * Книга даёт на выбор два обычая: ходят либо из-под дурака, либо сам дурак.
+ * Здесь оставлен второй — вдвоём «из-под дурака» значит «ходит победитель»,
+ * то есть тот же выбор с другого конца, и двумя выключателями его не
+ * выразить, не сделав один из них перевёртышем другого.
+ */
+val LOSER_LEADS = GameSetting(
+    key = "durak.loser_leads",
+    title = "Дурак ходит первым",
+    about = "Новую партию начинает проигравший прошлую. Выключено — по книге: " +
+        "первым ходит тот, у кого младший козырь.",
+    activation = Activation.NEW_MATCH,
+    default = false,
+)
+
+val DURAK_SETTINGS: List<GameSetting> = listOf(TRANSFER, LOSER_LEADS)
 
 /**
- * Разрешён ли перевод в этой раздаче.
+ * Договорённости, с которыми начинают партию.
  *
- * Читается в момент раздачи, а не на каждом ходу: партия помнит, по каким
+ * Читаются в момент раздачи, а не на каждом ходу: партия помнит, по каким
  * правилам её начали, и переключение посреди партии ход не меняет.
  *
- * Настройка переехала сюда из общих, и прежний её ключ читается как ответ по
- * умолчанию: кто выключил перевод до обновления, продолжит играть без него,
- * а не обнаружит его снова включённым.
+ * У перевода прежний ключ читается как ответ по умолчанию: настройка
+ * переехала сюда из общих, и кто выключил перевод до обновления, продолжит
+ * играть без него, а не обнаружит его снова включённым.
  */
-fun durakTransferAllowed(context: Context): Boolean =
-    GameSettingStore(context).value(TRANSFER, legacyKey = LEGACY_KEY_TRANSFER)
+fun loadDurakRules(context: Context): DurakRules {
+    val store = GameSettingStore(context)
+    return DurakRules(
+        transfer = store.value(TRANSFER, legacyKey = LEGACY_KEY_TRANSFER),
+        loserLeads = store.value(LOSER_LEADS),
+    )
+}

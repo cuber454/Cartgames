@@ -35,11 +35,14 @@ object DurakSave {
         appendLine("format $FORMAT")
         appendLine("trump ${letterOf(game.trumpSuit)}")
         appendLine("attacker ${game.attacker}")
-        // Режим партии, а не настройка экрана: партия помнит, по каким
-        // правилам её начали, и переключение настройки посреди неё её не
-        // меняет. Старые записи строки не имеют — там читается «да»:
-        // перевод был единственным вариантом до 0.8.
-        appendLine("transfer ${if (game.transferAllowed) "yes" else "no"}")
+        // Договорённости — режим партии, а не настройка экрана: партия помнит,
+        // по каким правилам её начали, и переключение настройки посреди неё её
+        // не меняет. Ключи читаются по имени и чужие пропускаются, поэтому
+        // новые строки старую запись не ломают: там, где их нет, играет
+        // умолчание. Строки `transfer` нет в записях до 0.8 — там читается
+        // «да»: перевод был единственным вариантом.
+        appendLine("transfer ${yesNo(game.rules.transfer)}")
+        appendLine("loserleads ${yesNo(game.rules.loserLeads)}")
         appendLine("deck ${game.deckCards().joinToString(" ") { codeOf(it) }}")
         for (seat in 0 until game.playerCount) {
             appendLine("hand$seat ${game.handOf(seat).joinToString(" ") { codeOf(it) }}")
@@ -107,9 +110,24 @@ object DurakSave {
             attacker = attacker,
             table = table,
             discarded = discarded,
-            transferAllowed = fields["transfer"]?.lowercase() != "no",
+            rules = DurakRules(
+                transfer = yes(fields["transfer"], default = true),
+                loserLeads = yes(fields["loserleads"]),
+            ),
         )
     }
+
+    // --- Прочее в текст и обратно -----------------------------------------
+
+    private fun yesNo(value: Boolean): String = if (value) "yes" else "no"
+
+    /** [default] — ответ, когда строки в записи нет вовсе. */
+    private fun yes(value: String?, default: Boolean = false): Boolean =
+        when (value?.lowercase()) {
+            "yes" -> true
+            "no" -> false
+            else -> default
+        }
 
     // --- Карты в текст и обратно ------------------------------------------
 

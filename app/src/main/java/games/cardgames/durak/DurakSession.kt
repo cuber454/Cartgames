@@ -11,6 +11,7 @@ import games.cardgames.score.Score
 import games.cardgames.score.loadScore
 import games.cardgames.settings.loadSettings
 import games.engine.durak.DurakGame
+import games.engine.durak.DurakRules
 import games.engine.durak.DurakSave
 
 /**
@@ -85,9 +86,14 @@ class DurakSession(context: Context) {
      * Новая партия. Первую фразу не задаём: экран сам решит, объявить
      * раздачу или сказать «продолжаем» — здесь для этого нет ни голоса,
      * ни настроек.
+     *
+     * По договорённости «дурак ходит первым» первый ход отдаётся проигравшему
+     * прошлую партию. Кто это, знает только доигранная партия — и знает ровно
+     * до тех пор, пока мы её не выбросили, поэтому спрашиваем до, а не после.
      */
-    fun restart(transferAllowed: Boolean = true) {
-        game = DurakGame.start(transferAllowed = transferAllowed)
+    fun restart(rules: DurakRules = DurakRules.BOOK) {
+        val loserLeads = game.loser?.takeIf { rules.loserLeads }
+        game = DurakGame.start(rules = rules, firstAttacker = loserLeads)
         lastPhrase = ""
         outcome = null
         finishSaid = false
