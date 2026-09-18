@@ -328,7 +328,9 @@ private fun Path.curveTo(
 
 /** Замкнутая фигура по долям карты: углы и есть её контур. */
 private fun filled(grid: FaceGrid, vararg corners: List<Pair<Float, Float>>): Path {
-    val points = corners.flatten()
+    // flatMap, а не flatten: у Array<out List<T>> нет flatten — тот есть только
+    // у массива массивов и у Iterable из Iterable.
+    val points = corners.flatMap { it }
     return Path().apply {
         points.forEachIndexed { index, (x, y) ->
             val point = grid.at(x, y)
