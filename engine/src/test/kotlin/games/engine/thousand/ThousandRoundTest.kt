@@ -474,6 +474,39 @@ class ThousandRoundTest {
     }
 
     @Test
+    fun `карту с марьяжем можно и сыграть, и похвалить`() {
+        // Экран переспрашивает игрока ровно потому, что у карты два равных
+        // права хода: «положить короля» и «похвалить черви». Если движок
+        // когда-нибудь оставит одно, диалог станет враньём — этот тест
+        // и скажет, что спрашивать больше не о чем.
+        val round = ThousandRound.forTesting(
+            hands = listOf(
+                listOf(
+                    c(Rank.NINE, Suit.CLUBS), c(Rank.ACE, Suit.HEARTS),
+                    c(Rank.NINE, Suit.SPADES), c(Rank.TEN, Suit.DIAMONDS), c(Rank.JACK, Suit.DIAMONDS),
+                ),
+                listOf(c(Rank.ACE, Suit.CLUBS), c(Rank.KING, Suit.HEARTS), c(Rank.QUEEN, Suit.HEARTS)),
+            ),
+        )
+        round.apply(0, ThousandMove.Bid(100))
+        round.apply(1, ThousandMove.Pass)
+        round.apply(0, ThousandMove.TakePrikups(0))
+        round.apply(0, ThousandMove.Discard(listOf(c(Rank.JACK, Suit.DIAMONDS))))
+        round.apply(0, ThousandMove.Play(c(Rank.NINE, Suit.CLUBS)))
+        round.apply(1, ThousandMove.Play(c(Rank.ACE, Suit.CLUBS)))
+
+        val moves = round.legalMoves(1)
+        assertTrue(
+            moves.contains(ThousandMove.Play(c(Rank.KING, Suit.HEARTS))),
+            "король ходит и без похвалы",
+        )
+        assertTrue(
+            moves.contains(ThousandMove.Praise(c(Rank.KING, Suit.HEARTS))),
+            "той же картой марьяж и объявляют",
+        )
+    }
+
+    @Test
     fun `заказчик пишет заказ или минус заказ, защитник — округлённое до пяти`() {
         // Заказчик набрал 27 очков при заказе 100 — пишет минус сотню.
         // Защитник взял 11 и 3 — пишет 15.

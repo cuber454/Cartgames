@@ -49,12 +49,15 @@ import games.cardgames.ui.TableCards
 import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
 import games.engine.Card as EngineCard
+import games.engine.Rank
 import games.engine.thousand.Phase
 import games.engine.thousand.RoundSummary
 import games.engine.thousand.ThousandBot
 import games.engine.thousand.ThousandMatch
 import games.engine.thousand.ThousandMove
 import games.engine.thousand.ThousandRound
+import games.engine.thousand.hasMarriage
+import games.engine.thousand.marriagePoints
 import games.engine.thousand.orderHand
 import kotlinx.coroutines.delay
 import kotlin.random.Random
@@ -142,6 +145,10 @@ fun ThousandScreen(
     // Открыт ли вопрос о золотом коне: он стоит вдвое дороже обычного кона
     // и берётся на всю партию, поэтому спрашивается подтверждением.
     var goldenOpen by remember { mutableStateOf(false) }
+    // Карта с марьяжем, по которой нажали. У неё за столом два смысла сразу:
+    // ею ходят и ею же хвалят. Молча выбрать за игрока нельзя — сыгранная
+    // без похвалы, она марьяж теряет, и теряет без единого слова.
+    var cardPraise by remember { mutableStateOf<ThousandMove.Praise?>(null) }
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
     val cardHeight: Dp = (CARD_HEIGHT * scale).dp
@@ -272,8 +279,14 @@ fun ThousandScreen(
         dealNew()
     }
 
-    /** Ход игрока: фраза, звук, толчок и передача хода — в одном месте. */
-    fun play(move: ThousandMove) {
+    /**
+     * Ход игрока: фраза, звук, толчок и передача хода — в одном месте.
+     *
+     * [note] — приписка к фразе о том, чего ход не сделал. Одной фразой, а не
+     * второй речью следом: [TableVoice.sayRequested] перебивает сказанное, и
+     * отдельная приписка съела бы сам ход.
+     */
+    fun play(move: ThousandMove, note: String = "") {
         val round = session.round
         val tricksBefore = round.tricksPlayed().size
         val phrase = ownPhrase(
@@ -288,7 +301,7 @@ fun ThousandScreen(
         round.apply(PLAYER, move)
         val gap = soundGap(move)
         voice.sayOwnMove(
-            phrase + trickSuffix(round, tricksBefore),
+            phrase + note + trickSuffix(round, tricksBefore),
             afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
         )
         session.persist()
@@ -317,8 +330,24 @@ fun ThousandScreen(
         return "Можно: " + parts.joinToString(", ") + "."
     }
 
-    /** Нажатие на карту: в сносе она уходит, в розыгрыше — играется. */
-    fun tapCard(card: EngineCard) {
+    /**
+     * Отчего карту с марьяжем нельзя похвалить прямо сейчас. Марьяж объявляют
+     * за столом, а не на пустой стол: пока не взято ни одной взятки, хвалить
+     * нечем. Сказать об этом надо в тот же момент — иначе о потерянном
+     * марьяже игрок узнаёт только по счёту в конце кона.
+     */
+    fun marriageNote(card: EngineCard): String {
+        if (card.rank != Rank.KING && card.rank != Rank.QUEEN) return ""
+        val round = session.round
+        if (!round.handOf(PLAYER).hasMarriage(card.suit)) return ""
+        // Хвалить уже можно — значит игрок сам выбрал сыграть без похвалы,
+        // а это его решение, а не потеря по незнанию.
+        if (round.tricksOf(PLAYER) > 0) return ""
+        return " Марьяж ${card.suit.spoken} похвалить нельзя: взяток ещё нет."
+    }
+
+    /** Сыграть карту, если это сейчас можно. */
+    fun playCard(card: EngineCard) {
         val moves = session.round.legalMoves(PLAYER)
         val move = moves.filterIsInstance<ThousandMove.Play>().firstOrNull { it.card == card }
             ?: moves.filterIsInstance<ThousandMove.Discard>().firstOrNull { card in it.cards }
@@ -329,7 +358,24 @@ fun ThousandScreen(
                 voice.sayRequested("Сейчас этой картой нельзя.")
                 return
             }
-        play(move)
+        play(move, note = if (move is ThousandMove.Play) marriageNote(card) else "")
+    }
+
+    /**
+     * Нажатие на карту: в сносе она уходит, в розыгрыше — играется, а если
+     * ею же можно похвалить марьяж, то сначала спрашиваем, что имелось в
+     * виду. Отвечать за игрока тут нельзя: сыгранный без похвалы король
+     * пару уже не соберёт, а марьяж стоит до ста очков.
+     */
+    fun tapCard(card: EngineCard) {
+        val praise = session.round.legalMoves(PLAYER)
+            .filterIsInstance<ThousandMove.Praise>()
+            .firstOrNull { it.card == card }
+        if (praise != null) {
+            cardPraise = praise
+            return
+        }
+        playCard(card)
     }
 
     // Ход бота: играем за него все ходы подряд, пока ход не вернётся к игроку.
@@ -749,6 +795,39 @@ fun ThousandScreen(
             },
             confirmButton = {
                 TextButton(onClick = { praiseOpen = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    // Карта, которая годится и на ход, и на похвалу. Один диалог на одну
+    // карту: объявляют марьяж той же картой, которой ходят, и выбрать за
+    // игрока — значит решить, нужен ли ему марьяж, не спросив его.
+    cardPraise?.let { praise ->
+        val suit = praise.card.suit
+        AlertDialog(
+            onDismissRequest = { cardPraise = null },
+            title = { Text("Хвалить марьяж?") },
+            text = {
+                Text(
+                    "${praise.card.spoken()}: похвалить — это ${marriagePoints(suit)} очков " +
+                        "и козырь ${suit.spoken}. Или сыграть ею без похвалы.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        cardPraise = null
+                        play(praise)
+                    },
+                ) { Text("Хвалить") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        cardPraise = null
+                        playCard(praise.card)
+                    },
+                ) { Text("Сыграть без похвалы") }
             },
         )
     }
