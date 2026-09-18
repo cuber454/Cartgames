@@ -39,10 +39,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_DURAK
+import games.cardgames.GAME_KOZEL
 import games.cardgames.GAME_THOUSAND
 import games.cardgames.diag.Journal
 import games.cardgames.diag.JournalShare
 import games.cardgames.durak.DURAK_SETTINGS
+import games.cardgames.kozel.KOZEL_SETTINGS
 import games.cardgames.score.loadScore
 import games.cardgames.score.saveScore
 import games.cardgames.score.Score
@@ -61,6 +63,7 @@ private enum class VoiceSlot(val title: String, val inherit: String) {
     APP("Голос приложения", "системный"),
     DURAK("Голос соперника в дураке", "как у приложения"),
     THOUSAND("Голос соперника в тысяче", "как у приложения"),
+    KOZEL("Голос соперника в козле", "как у приложения"),
 }
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
@@ -85,7 +88,7 @@ private fun sampleFor(index: Int, total: Int, hint: String?): String = buildStri
 /**
  * Настройки: всё, что можно включить, выключить или выбрать.
  *
- * Экран один на всё приложение, а игр две, поэтому первым делом он знает,
+ * Экран один на всё приложение, а игр три, поэтому первым делом он знает,
  * чьи настройки показывает: [game] — игра, из-за стола которой пришли.
  * Её правила и её соперник стоят наверху, а ниже идёт общее — то, что
  * одинаково за любым столом. Пришли из главного меню ([game] равен null) —
@@ -227,6 +230,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.APP -> settings.copy(voice = name)
                 VoiceSlot.DURAK -> settings.copy(botVoiceDurak = name)
                 VoiceSlot.THOUSAND -> settings.copy(botVoiceThousand = name)
+                VoiceSlot.KOZEL -> settings.copy(botVoiceKozel = name)
             },
         )
         when (slot) {
@@ -240,6 +244,11 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 botVoice(name, settings.voice),
                 botPitch(name, BOT_PITCH_THOUSAND),
                 sampleFor(index, voices.size, if (name == null) "выше" else null),
+            )
+            VoiceSlot.KOZEL -> auditionVoice(
+                botVoice(name, settings.voice),
+                botPitch(name, BOT_PITCH_KOZEL),
+                sampleFor(index, voices.size, if (name == null) "ещё выше" else null),
             )
         }
     }
@@ -311,26 +320,41 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
             SettingButton("Соперник: ${botDifficulty(game, settings).title}") {
                 val next = botDifficulty(game, settings).next()
-                save(
-                    if (game == GAME_THOUSAND) {
-                        settings.copy(botDifficultyThousand = next)
-                    } else {
-                        settings.copy(botDifficultyDurak = next)
-                    },
-                )
+                save(withBotDifficulty(game, settings, next))
                 announce("Соперник: ${next.title}.")
+            }
+
+            // Порядок костей — рядом с соперником и до договорённостей: это
+            // то, чего игрок хочет от своей руки, а не то, о чём сговариваются
+            // за столом. Стоит здесь, а не в общих: у карт свой порядок, и
+            // общий список от этого только путался бы (Катерина, 18.09).
+            if (game == GAME_KOZEL) {
+                Spacer(Modifier.height(8.dp))
+                SettingButton("Порядок костей: ${settings.tileOrder.title}") {
+                    val next = settings.tileOrder.next()
+                    save(settings.copy(tileOrder = next))
+                    announce("Порядок костей: ${next.title}.")
+                }
             }
 
             Spacer(Modifier.height(8.dp))
 
             Text(
-                if (game == GAME_THOUSAND) "Договорённости сторон" else "Правила стола",
+                // В «Дураке» за столом сговариваются только о переводе, и
+                // «правила стола» там — точное слово. В «Тысяче» и в «Козле»
+                // договариваются о том, что считают по-разному, — там это
+                // договорённости сторон.
+                if (game == GAME_DURAK) "Правила стола" else "Договорённости сторон",
                 style = MaterialTheme.typography.titleMedium,
             )
             Spacer(Modifier.height(8.dp))
 
             val gameSettings = remember { GameSettingStore(context) }
-            val rules = if (game == GAME_THOUSAND) THOUSAND_SETTINGS else DURAK_SETTINGS
+            val rules = when (game) {
+                GAME_KOZEL -> KOZEL_SETTINGS
+                GAME_THOUSAND -> THOUSAND_SETTINGS
+                else -> DURAK_SETTINGS
+            }
             rules.forEach { setting ->
                 GameSettingRow(setting, gameSettings) { announce(it) }
             }
@@ -412,9 +436,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 }
             }
 
-            // Голос у каждого из троих свой: за столом говорят приложение и два
-            // бота, и на слух их надо различать — «бот сказал» и «приложение
-            // сказало» это разные вещи, спутать их значит не понять, чей ход.
+            // Голос у каждого из четверых свой: за столом говорят приложение и
+            // три бота, и на слух их надо различать — «бот сказал» и
+            // «приложение сказало» это разные вещи, спутать их значит не
+            // понять, чей ход.
             SettingButton(voiceRowTitle(VoiceSlot.APP, settings.voice, voices)) {
                 if (voices.isEmpty()) {
                     announce("Синтезатор ещё не готов, попробуй ещё раз.")
@@ -436,6 +461,14 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                     announce("Синтезатор ещё не готов, попробуй ещё раз.")
                 } else {
                     picking = VoiceSlot.THOUSAND
+                }
+            }
+
+            SettingButton(voiceRowTitle(VoiceSlot.KOZEL, settings.botVoiceKozel, voices)) {
+                if (voices.isEmpty()) {
+                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
+                } else {
+                    picking = VoiceSlot.KOZEL
                 }
             }
 
@@ -619,6 +652,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.APP -> settings.voice
                 VoiceSlot.DURAK -> settings.botVoiceDurak
                 VoiceSlot.THOUSAND -> settings.botVoiceThousand
+                VoiceSlot.KOZEL -> settings.botVoiceKozel
             },
             onPick = { name, index -> pick(openSlot, name, index) },
             onClose = { picking = null },
@@ -686,11 +720,26 @@ private fun VoiceOption(label: String, selected: Boolean, onClick: () -> Unit) {
 /** Какая половина настроек открыта. Из главного меню половина всегда одна — [COMMON]. */
 private enum class SettingsPart { GAME, COMMON }
 
-private fun gameTitle(game: String): String = if (game == GAME_DURAK) "Дурак" else "Тысяча"
+private fun gameTitle(game: String): String = when (game) {
+    GAME_KOZEL -> "Козёл"
+    GAME_THOUSAND -> "Тысяча"
+    else -> "Дурак"
+}
 
 /** Соперник той игры, чьи настройки открыты: у каждой игры он свой. */
-private fun botDifficulty(game: String, settings: Settings): Difficulty =
-    if (game == GAME_DURAK) settings.botDifficultyDurak else settings.botDifficultyThousand
+private fun botDifficulty(game: String, settings: Settings): Difficulty = when (game) {
+    GAME_KOZEL -> settings.botDifficultyKozel
+    GAME_THOUSAND -> settings.botDifficultyThousand
+    else -> settings.botDifficultyDurak
+}
+
+/** Записать силу соперника той игре, чьи настройки открыты. */
+private fun withBotDifficulty(game: String, settings: Settings, value: Difficulty): Settings =
+    when (game) {
+        GAME_KOZEL -> settings.copy(botDifficultyKozel = value)
+        GAME_THOUSAND -> settings.copy(botDifficultyThousand = value)
+        else -> settings.copy(botDifficultyDurak = value)
+    }
 
 /** Объяснить выбранный режим словами: «авто» само по себе ничего не говорит. */
 private fun whoSpeaksPhrase(mode: VoiceMode): String = when (mode) {

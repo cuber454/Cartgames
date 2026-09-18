@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import games.engine.HandOrder
 import games.engine.durak.Difficulty
+import games.engine.tiles.TileOrder
 import kotlin.math.round
 import kotlin.math.roundToInt
 
@@ -52,15 +53,17 @@ private val LEGACY_RATES = mapOf("SLOW" to 0.75f, "NORMAL" to 1.0f, "FAST" to 1.
 /**
  * Высота голоса бота, если своего голоса ему не выбрали.
  *
- * За столом говорят трое: приложение, бот в дураке и бот в тысяче. Голосов
- * в телефоне у игрока бывает и один, а различать их надо всех: «бот сказал»
- * и «приложение сказало» — разные вещи, и спутать их значит не понять, чей
- * ход. Поэтому бот без своего голоса говорит голосом приложения, сдвинутым
- * по высоте: в дураке ниже, в тысяче выше. Сдвиг небольшой — голос должен
- * остаться разборчивым, а на слух и четверти тона хватает.
+ * За столом говорят вчетвером: приложение, бот в дураке, бот в тысяче и бот
+ * в «Козле». Голосов в телефоне у игрока бывает и один, а различать их надо
+ * всех: «бот сказал» и «приложение сказало» — разные вещи, и спутать их
+ * значит не понять, чей ход. Поэтому бот без своего голоса говорит голосом
+ * приложения, сдвинутым по высоте: в дураке ниже, в тысяче выше, в «Козле»
+ * ещё выше. Сдвиг небольшой — голос должен остаться разборчивым, а на слух
+ * и четверти тона хватает.
  */
 const val BOT_PITCH_DURAK = 0.85f
 const val BOT_PITCH_THOUSAND = 1.2f
+const val BOT_PITCH_KOZEL = 1.4f
 
 /** Голос бота: свой, а не выбрали — голос приложения. */
 fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
@@ -116,6 +119,7 @@ data class Settings(
      */
     val botVoiceDurak: String? = null,
     val botVoiceThousand: String? = null,
+    val botVoiceKozel: String? = null,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     /**
@@ -148,7 +152,25 @@ data class Settings(
      */
     val botDifficultyDurak: Difficulty = Difficulty.NORMAL,
     val botDifficultyThousand: Difficulty = Difficulty.NORMAL,
+    val botDifficultyKozel: Difficulty = Difficulty.NORMAL,
+    /**
+     * Порядок карт на руке: по масти или по старшинству.
+     *
+     * Он у карт, а не у игр: рука листается вслепую, и порядок в ней — способ
+     * найти нужную карту, а не договорённость за столом. Карты одни и те же
+     * в дураке и в тысяче, значит и порядок у них один.
+     */
     val order: HandOrder = HandOrder.BY_SUIT,
+    /**
+     * Порядок костей на руке — своё, а не [order]: карты и кости листаются
+     * по-разному, и порядок, удобный для масти, ничего не значит для кости.
+     *
+     * По умолчанию [TileOrder.BY_NUMBERS]: за столом чаще всего спрашивают
+     * «чем ответить на шестёрку», и рядом оказываются все шестёрки сразу
+     * (Катерина, 18.09: «сделай в настройках Домино настройку сортировки и
+     * пусть по умолчанию будет как ты рекомендуешь»).
+     */
+    val tileOrder: TileOrder = TileOrder.BY_NUMBERS,
     /**
      * Игра, в которую играли последней. По ней в главном меню появляется
      * кнопка быстрого входа: за стол возвращаются чаще, чем заглядывают в
@@ -174,6 +196,7 @@ private const val KEY_ENGINE = "engine"
 private const val KEY_VOICE = "voice"
 private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
+private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
 private const val KEY_BOT_NAME = "bot_name"
@@ -183,7 +206,9 @@ private const val KEY_VIBRATION = "vibration"
 private const val KEY_OWN_VIBRATION = "own_vibration"
 private const val KEY_BOT_DIFFICULTY_DURAK = "durak.difficulty"
 private const val KEY_BOT_DIFFICULTY_THOUSAND = "thousand.difficulty"
+private const val KEY_BOT_DIFFICULTY_KOZEL = "kozel.difficulty"
 private const val KEY_ORDER = "order"
+private const val KEY_TILE_ORDER = "tile_order"
 
 /**
  * Ключи из версий до 0.9: тогда и соперник, и перевод были одни на всё
@@ -205,6 +230,7 @@ fun loadSettings(context: Context): Settings {
         voice = prefs.getString(KEY_VOICE, null),
         botVoiceDurak = prefs.getString(KEY_BOT_VOICE_DURAK, null),
         botVoiceThousand = prefs.getString(KEY_BOT_VOICE_THOUSAND, null),
+        botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
         voiceMode = prefs.getString(KEY_VOICE_MODE, null)
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
@@ -216,9 +242,13 @@ fun loadSettings(context: Context): Settings {
         ownVibration = prefs.getBoolean(KEY_OWN_VIBRATION, true),
         botDifficultyDurak = readDifficulty(prefs, KEY_BOT_DIFFICULTY_DURAK),
         botDifficultyThousand = readDifficulty(prefs, KEY_BOT_DIFFICULTY_THOUSAND),
+        botDifficultyKozel = readDifficulty(prefs, KEY_BOT_DIFFICULTY_KOZEL),
         order = prefs.getString(KEY_ORDER, null)
             ?.let { name -> runCatching { HandOrder.valueOf(name) }.getOrNull() }
             ?: HandOrder.BY_SUIT,
+        tileOrder = prefs.getString(KEY_TILE_ORDER, null)
+            ?.let { name -> runCatching { TileOrder.valueOf(name) }.getOrNull() }
+            ?: TileOrder.BY_NUMBERS,
         lastGame = prefs.getString(KEY_LAST_GAME, null) ?: "durak",
         largeText = prefs.getBoolean(KEY_LARGE, false),
         autosave = prefs.getBoolean(KEY_AUTOSAVE, true),
@@ -254,6 +284,7 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_VOICE, settings.voice)
         .putString(KEY_BOT_VOICE_DURAK, settings.botVoiceDurak)
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
+        .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
         .putString(KEY_BOT_NAME, settings.botName)
@@ -263,7 +294,9 @@ fun saveSettings(context: Context, settings: Settings) {
         .putBoolean(KEY_OWN_VIBRATION, settings.ownVibration)
         .putString(KEY_BOT_DIFFICULTY_DURAK, settings.botDifficultyDurak.name)
         .putString(KEY_BOT_DIFFICULTY_THOUSAND, settings.botDifficultyThousand.name)
+        .putString(KEY_BOT_DIFFICULTY_KOZEL, settings.botDifficultyKozel.name)
         .putString(KEY_ORDER, settings.order.name)
+        .putString(KEY_TILE_ORDER, settings.tileOrder.name)
         .putString(KEY_LAST_GAME, settings.lastGame)
         .putBoolean(KEY_LARGE, settings.largeText)
         .putBoolean(KEY_AUTOSAVE, settings.autosave)

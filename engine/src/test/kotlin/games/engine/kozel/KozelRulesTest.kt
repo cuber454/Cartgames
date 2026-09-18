@@ -83,6 +83,41 @@ class KozelRulesTest {
     }
 
     @Test
+    fun `линия раскладывается поворотами костей, а не вразнобой`() {
+        // Линия собирается ходами, и каждая кость ложится той половиной,
+        // которой подошла: наружу у неё остаётся вторая.
+        val line = Line.EMPTY
+            .place(tile(3, 6), End.LEFT)
+            .place(tile(4, 6), End.RIGHT)
+            .place(tile(1, 3), End.LEFT)
+
+        // Слева направо: 1-3 (наружу единицей), 3-6, 6-4 (наружу четвёркой).
+        assertEquals(
+            listOf(LaidTile(1, 3), LaidTile(3, 6), LaidTile(6, 4)),
+            line.laid(),
+        )
+        // Соседние половины сходятся: нарисованная линия не разъедется.
+        val laid = line.laid()
+        for (i in 0 until laid.size - 1) {
+            assertEquals(laid[i].right, laid[i + 1].left, "кости $i и ${i + 1} не сходятся")
+        }
+        assertEquals(line.left, laid.first().left)
+        assertEquals(line.right, laid.last().right)
+    }
+
+    @Test
+    fun `дубль в линии смотрит наружу тем же числом`() {
+        val line = Line.EMPTY.place(tile(3, 6), End.LEFT).place(tile(6, 6), End.RIGHT)
+
+        assertEquals(listOf(LaidTile(3, 6), LaidTile(6, 6)), line.laid())
+    }
+
+    @Test
+    fun `пустая линия раскладывается в пустое`() {
+        assertEquals(emptyList(), Line.EMPTY.laid())
+    }
+
+    @Test
     fun `кость, подходящая к обоим концам, даёт два хода`() {
         val moves = lineWithEnds(3, 6).placements(listOf(tile(3, 6)))
         assertEquals(2, moves.size)
