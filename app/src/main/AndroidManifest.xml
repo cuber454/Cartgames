@@ -5,6 +5,15 @@
          способ понять, что бот сходил и ждёт тебя. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Обновление: приложение само спрашивает у GitHub, что вышло нового, и
+         тянет сборку. Без сети обновлений не будет, но игра работает. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Установка скачанной сборки. Игрок всегда подтверждает установку сам:
+         разрешение нужно лишь на то, чтобы системный установщик вообще
+         открылся, — без него кнопка «Установить» не открыла бы ничего. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Список синтезаторов речи. С Android 11 приложение видит чужие
          пакеты, только если спросит о них заранее: без этого объявления
          в настройках остаётся один системный движок, и выбрать RHVoice
@@ -44,6 +53,19 @@
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Скачанная сборка уезжает системному установщику той же дверью, что
+             и журнал, но из другого корня: журнал — в памяти приложения,
+             сборка — в кэше. Отдаётся один файл и только на время установки. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
         </provider>
     </application>
 
