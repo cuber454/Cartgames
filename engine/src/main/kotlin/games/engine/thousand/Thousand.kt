@@ -527,7 +527,7 @@ class ThousandRound private constructor(
         ThousandMove.Pass -> "Пас."
         is ThousandMove.TakePrikups -> "Прикуп взят."
         is ThousandMove.Discard -> "Снос: ${move.cards.joinToString(", ") { it.spoken() }}."
-        is ThousandMove.Praise -> "Хвалю ${move.card.suit.spoken}."
+        is ThousandMove.Praise -> "Хвалю ${move.card.suit.title}."
         ThousandMove.Golden -> "Золотой кон: без торга, заказ $GOLDEN_BID."
         ThousandMove.Raspis -> "Роспись: заказ не играется."
         is ThousandMove.Play -> "Сыграна ${move.card.spoken()}."

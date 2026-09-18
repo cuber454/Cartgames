@@ -358,7 +358,7 @@ fun ThousandScreen(
             .forEach { parts += "взять прикуп ${it.index + 1}" }
         moves.filterIsInstance<ThousandMove.Play>().forEach { parts += "положить ${it.card.spoken()}" }
         moves.filterIsInstance<ThousandMove.Praise>()
-            .forEach { parts += "похвалить ${it.card.suit.spoken}" }
+            .forEach { parts += "похвалить ${it.card.suit.title}" }
         if (moves.contains(ThousandMove.Pass)) parts += "пас"
         if (moves.contains(ThousandMove.Raspis)) parts += "расписаться"
         if (moves.contains(ThousandMove.Golden)) parts += "объявить золотой кон"
@@ -378,7 +378,7 @@ fun ThousandScreen(
         // Хвалить уже можно — значит игрок сам выбрал сыграть без похвалы,
         // а это его решение, а не потеря по незнанию.
         if (round.tricksOf(PLAYER) > 0) return ""
-        return " Марьяж ${card.suit.spoken} похвалить нельзя: взяток ещё нет."
+        return " Марьяж ${card.suit.title} похвалить нельзя: взяток ещё нет."
     }
 
     /** Сыграть карту, если это сейчас можно. */
@@ -565,7 +565,7 @@ fun ThousandScreen(
         // Козырь в «Тысяче» — масть объявленного марьяжа: до первого
         // объявления его попросту нет, и молчать об этом честнее, чем
         // называть козырем что-то одно.
-        round.trumpSuit?.let { append(" Козырь — ${it.spoken}.") }
+        round.trumpSuit?.let { append(" Козырь — ${it.title}.") }
         append(" Счёт: ты ${match.scores[PLAYER]}, $bot ${match.scores[BOT]}.")
         // Сложить руку в уме до ста двадцати — работа, которой за столом
         // никто не делает: зрячий видит это с одного взгляда, а на слух надо
@@ -912,7 +912,7 @@ fun ThousandScreen(
                                 play(praise, aloud = true)
                             },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Хвалить: ${praise.card.suit.spoken}") }
+                        ) { Text("Хвалить: ${praise.card.suit.title}") }
                     }
                 }
             },
@@ -933,7 +933,7 @@ fun ThousandScreen(
             text = {
                 Text(
                     "${praise.card.spoken()}: похвалить — это ${marriagePoints(suit)} очков " +
-                        "и козырь ${suit.spoken}. Или сыграть ею без похвалы.",
+                        "и козырь ${suit.name}. Или сыграть ею без похвалы.",
                 )
             },
             confirmButton = {
@@ -1013,7 +1013,7 @@ private fun botPhrase(
     // не назовём сейчас — игрок найдёт её только перебором руки. Играем
     // вдвоём, поэтому весь снос достаётся игроку.
     is ThousandMove.Discard -> "$bot сносит карту: тебе ${move.cards.joinToString(", ") { it.spoken() }}."
-    is ThousandMove.Praise -> "$bot хвалит ${move.card.suit.spoken}. Козырь — ${move.card.suit.spoken}."
+    is ThousandMove.Praise -> "$bot хвалит ${move.card.suit.title}. Козырь — ${move.card.suit.title}."
     ThousandMove.Golden -> "$bot объявляет золотой кон: заказ 120, очки двойные."
     ThousandMove.Raspis -> "$bot расписывается."
     is ThousandMove.Play -> "$bot кладёт ${move.card.spoken()}."
@@ -1030,8 +1030,8 @@ private fun ownPhrase(move: ThousandMove, prikup: List<EngineCard> = emptyList()
     // Карта названа намеренно: хвалить можно и королём, и дамой, а на стол
     // уходит ровно одна из них — без имени игрок ищет пропажу перебором руки.
     is ThousandMove.Praise ->
-        "Хвалишь ${move.card.suit.spoken}: на стол уходит ${move.card.spoken()}. " +
-            "Козырь — ${move.card.suit.spoken}."
+        "Хвалишь ${move.card.suit.title}: на стол уходит ${move.card.spoken()}. " +
+            "Козырь — ${move.card.suit.title}."
     ThousandMove.Golden -> "Объявляешь золотой кон: заказ 120, прикуп не берёшь, очки двойные."
     ThousandMove.Raspis -> "Расписываешься."
     is ThousandMove.Play -> "Кладёшь ${move.card.spoken()}."
@@ -1064,7 +1064,7 @@ private fun resumePhrase(
 
         Phase.OVER -> "Кон окончен."
     }
-    val trump = round.trumpSuit?.let { " Козырь — ${it.spoken}." } ?: ""
+    val trump = round.trumpSuit?.let { " Козырь — ${it.title}." } ?: ""
     // Золотой кон поднятой партии называют первым делом: без торга и без
     // прикупа он и так выбивается из привычного хода кона, но заметить это
     // по одному лишь «розыгрыш» невозможно.
