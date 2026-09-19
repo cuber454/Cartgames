@@ -375,6 +375,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * скорость тут — примета, по которой бота узнают, а не разборчивость,
      * которую подгоняют под себя.
      */
+    @Composable
     fun rateRow(slot: VoiceSlot) {
         val value = slotRate(settings, slot)
         SettingButton("${slot.rateLabel}: ${botRateTitle(value)}") {
