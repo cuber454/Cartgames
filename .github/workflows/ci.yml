@@ -154,3 +154,26 @@ jobs:
             --repo "$REPO" \
             --title "Сборка $BUILD" \
             --notes "$(git log -1 --pretty=%s)"
+
+      # Запасная дорога к новости о сборке: та же пара строк уезжает в ветку
+      # release-info, откуда её отдаёт CDN jsDelivr (app/.../update/Update.kt,
+      # MANIFEST_URL_CDN). Нужна на случай, когда у игрока не разрешается имя
+      # github.com: имя cdn.jsdelivr.net разрешается, и новость доходит.
+      #
+      # Ветка не main — прогонов не запускает (workflow слушает только main), а
+      # переписывается целиком: в ней нужен только свежий файл, история не
+      # нужна. Кэш CDN сбрасываем руками: без сброса новая сборка доехала бы до
+      # игрока не раньше, чем CDN сам решит перечитать ветку.
+      - name: Опубликовать новость о сборке в ветке release-info
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # BUILD приходит из предыдущего шага (GITHUB_ENV).
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B release-info
+          git add -f update.txt
+          git commit -m "Новость о сборке $BUILD"
+          git push -f origin release-info
+          curl -sS "https://purge.jsdelivr.net/gh/$REPO@release-info/update.txt" || true

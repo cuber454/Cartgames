@@ -96,6 +96,26 @@ class UpdateTest {
         assertEquals("сборка 7", release?.title)
     }
 
+    /**
+     * Дороги к сборке. Прямая обязана идти первой и остаться нетронутой: на
+     * незаблокированной сети посредник не нужен вовсе. Зеркала же не
+     * разбирают ссылку, а приставляют себя спереди — потеряй они её, и
+     * посредник не поймёт, что у него просят.
+     */
+    @Test
+    fun `сборку берут сперва напрямую, потом через зеркала`() {
+        val url =
+            "https://github.com/cuber454/Cartgames/releases/download/v0.9.42/cartgames-0.9.42.apk"
+
+        val roads = Update.apkRoads(url)
+
+        assertEquals(url, roads.first().url)
+        assertTrue("зеркал не осталось", roads.size > 1)
+        roads.drop(1).forEach { road ->
+            assertTrue("дорога «${road.name}» потеряла ссылку", road.url.endsWith(url))
+        }
+    }
+
     @Test
     fun `свежая сборка — та, чей номер больше`() {
         val release = Update.parse(
