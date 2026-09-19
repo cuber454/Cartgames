@@ -44,6 +44,60 @@ object Update {
         "https://github.com/cuber454/Cartgames/releases/latest/download/update.txt"
 
     /**
+     * Запасной адрес той же новости — ветка `release-info` того же репозитория,
+     * отданная через CDN jsDelivr. Ветку переписывает CI на каждой сборке
+     * (`ci.yml`, шаг «Опубликовать новость»), а имя ветки здесь и там обязано
+     * совпадать.
+     */
+    const val MANIFEST_URL_CDN =
+        "https://cdn.jsdelivr.net/gh/cuber454/Cartgames@release-info/update.txt"
+
+    /**
+     * Дороги к новости о сборке, по порядку. Имена нужны журналу: по ним видно,
+     * какая дорога сработала, а какая отвалилась.
+     *
+     * Дорог несколько потому, что одной мало. 19.09 у Катерины телефон перестал
+     * разрешать имя `github.com` — «Unable to resolve host» в журнале, — и
+     * проверка обновления умерла вместе с именем: сборки у неё на руках
+     * остаются, а новости о новой взять неоткуда. Прямой адрес пробуется первым:
+     * он единственный, кому не нужен посредник, и на незаблокированной сети
+     * работает как раньше. Дальше — зеркала-посредники: они ходят на GitHub со
+     * своей стороны, и имя `github.com` телефону разрешать уже не нужно.
+     *
+     * Ходить через посредника не страшно: сборка принимается только с сошедшейся
+     * суммой ([Release.sha256]), а подписан её наш ключ. Подменить сборку
+     * посредник не может — Android не примет файл с чужой подписью; испортить
+     * ответ он может, но это видно и стоит одной неудачной проверки.
+     */
+    private val MANIFEST_ROADS: List<Road> = listOf(
+        Road("github", MANIFEST_URL),
+        Road("jsdelivr", MANIFEST_URL_CDN),
+        Road("gh-proxy", "https://gh-proxy.com/$MANIFEST_URL"),
+        Road("ghfast", "https://ghfast.top/$MANIFEST_URL"),
+    )
+
+    /**
+     * Дороги к самой сборке: зеркало приставляется к ссылке из файла обновления.
+     * Первой идёт прямая — на ней посредника нет вовсе.
+     */
+    private val APK_MIRRORS: List<Road> = listOf(
+        Road("github", ""),
+        Road("gh-proxy", "https://gh-proxy.com/"),
+        Road("ghfast", "https://ghfast.top/"),
+    )
+
+    /** Дорога: [name] — как звать её в журнале, [url] — куда идти. */
+    internal data class Road(val name: String, val url: String)
+
+    /**
+     * Ссылки на сборку по порядку: сначала прямая, потом через зеркала.
+     * Зеркало не разбирает ссылку, а приставляет себя спереди — так оно работает
+     * с любым адресом, и разбирать чужие адреса нам не приходится.
+     */
+    internal fun apkRoads(url: String): List<Road> =
+        APK_MIRRORS.map { Road(it.name, it.url + url) }
+
+    /**
      * Подкаталог в кэше, куда ложится скачанная сборка. Кэш, а не память
      * приложения: установщику файл нужен ровно один раз, а после установки
      * эта же сборка больше не понадобится. Имя обязано совпадать с `path` в
@@ -158,18 +212,37 @@ object Update {
     fun isNewer(remote: Release, localVersionCode: Int): Boolean =
         remote.versionCode > localVersionCode
 
-    /** Спросить, что вышло. Ходит в сеть — звать не с главного потока. */
-    fun check(localVersionCode: Int): Check = try {
-        when (val release = parse(readText(MANIFEST_URL))) {
-            null -> Check.Failed("файл обновления не разобрался")
-            else -> if (isNewer(release, localVersionCode)) Check.Fresh(release) else Check.Current
+    /**
+     * Спросить, что вышло, — по дорогам по очереди. Ходит в сеть: звать не с
+     * главного потока.
+     *
+     * Игроку при неудаче говорим коротко («ни одна дорога не ответила»), а
+     * какая дорога и на чём споткнулась — в журнал: вслух это лента, которую не
+     * удержать, а в журнале её видно построчно и есть что показать.
+     */
+    fun check(localVersionCode: Int): Check {
+        val trouble = mutableListOf<String>()
+        for (road in MANIFEST_ROADS) {
+            val release = try {
+                parse(readText(road.url))
+            } catch (e: Exception) {
+                trouble += "${road.name}: ${e.message ?: e.javaClass.simpleName}"
+                continue
+            }
+            if (release == null) {
+                trouble += "${road.name}: файл обновления не разобрался"
+                continue
+            }
+            Journal.note("обновление", "новость о сборке взята дорогой «${road.name}»")
+            return if (isNewer(release, localVersionCode)) Check.Fresh(release) else Check.Current
         }
-    } catch (e: Exception) {
-        Check.Failed(e.message ?: e.javaClass.simpleName)
+        Journal.note("обновление", "ни одна дорога не ответила: ${trouble.joinToString("; ")}")
+        return Check.Failed("ни одна дорога не ответила")
     }
 
     /**
-     * Скачать сборку и проверить её сумму.
+     * Скачать сборку и проверить её сумму — по дорогам по очереди, пока
+     * какая-нибудь не отдаст целый файл.
      *
      * Пишем сперва в файл с приставкой «.part», а готовый переименовываем:
      * загрузку может прервать уход из приложения или пропажа сети, и половина
@@ -180,12 +253,52 @@ object Update {
         if (downloading) return Get.Busy
         downloading = true
         return try {
-            val target = apkFile(context, release)
-            val part = File(target.parentFile, "${target.name}.part")
+            val trouble = mutableListOf<String>()
+            for (road in apkRoads(release.apkUrl)) {
+                when (val got = fetch(context, release, road)) {
+                    is Fetch.Done -> {
+                        Journal.note(
+                            "обновление",
+                            "сборка ${release.title} скачана и проверена: дорога «${road.name}»",
+                        )
+                        return Get.Ready(release, got.apk)
+                    }
+
+                    is Fetch.Failed -> trouble += "${road.name}: ${got.reason}"
+                }
+            }
+            Journal.note("обновление", "скачать ${release.title} не вышло: ${trouble.joinToString("; ")}")
+            Get.Failed("ни одна дорога сборку не отдала")
+        } finally {
+            downloading = false
+        }
+    }
+
+    /** Чем кончился один заход за сборкой по одной дороге. */
+    private sealed interface Fetch {
+        data class Done(val apk: File) : Fetch
+
+        data class Failed(val reason: String) : Fetch
+    }
+
+    /**
+     * Один заход за сборкой по одной дороге: скачать, посчитать сумму, поставить
+     * файл на место.
+     *
+     * Сумма проверяется здесь же, до того как файл получит имя целого: половина
+     * сборки под честным именем — это предложение установить то, что установщик
+     * отвергнет ошибкой, которую нечем объяснить. Не сошлась — дорога
+     * попробуется ещё раз через зеркало: у посредника ответ мог испортиться в
+     * пути.
+     */
+    private fun fetch(context: Context, release: Release, road: Road): Fetch {
+        val target = apkFile(context, release)
+        val part = File(target.parentFile, "${target.name}.part")
+        return try {
             target.parentFile?.mkdirs()
             part.delete()
             val digest = MessageDigest.getInstance("SHA-256")
-            withConnection(release.apkUrl) { connection ->
+            withConnection(road.url) { connection ->
                 var total = 0L
                 connection.inputStream.use { input ->
                     part.outputStream().use { output ->
@@ -204,18 +317,15 @@ object Update {
             val sum = digest.digest().joinToString("") { "%02x".format(it) }
             if (sum != release.sha256) {
                 part.delete()
-                Journal.note("обновление", "сборка ${release.title}: сумма не сошлась")
-                return Get.Failed("сборка скачалась битой, сумма не сошлась")
+                Fetch.Failed("сумма не сошлась")
+            } else {
+                target.delete()
+                if (!part.renameTo(target)) throw IOException("не удалось сохранить сборку")
+                Fetch.Done(target)
             }
-            target.delete()
-            if (!part.renameTo(target)) throw IOException("не удалось сохранить сборку")
-            Journal.note("обновление", "сборка ${release.title} скачана и проверена")
-            Get.Ready(release, target)
         } catch (e: Exception) {
-            Journal.note("обновление", "скачать ${release.title} не вышло: ${e.message}")
-            Get.Failed(e.message ?: e.javaClass.simpleName)
-        } finally {
-            downloading = false
+            part.delete()
+            Fetch.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
 
