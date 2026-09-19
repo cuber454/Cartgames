@@ -29,7 +29,8 @@ import games.engine.thousand.ThousandSave
  * иначе смена настройки посреди партии пересдала бы её на другое число
  * игроков (ThousandSave, строка «players»).
  */
-private fun seatsForNewMatch(context: Context): Int = seatsAtTable(loadSettings(context))
+private fun seatsForNewMatch(context: Context): Int =
+    seatsAtTable(loadSettings(context), GAME_THOUSAND)
 
 /**
  * Партия в «Тысячу», переживающая уход с экрана и перезапуск приложения.

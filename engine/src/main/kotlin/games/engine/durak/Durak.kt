@@ -34,7 +34,7 @@ sealed interface DurakMove : Move {
     /** Забрать всё со стола. */
     data object Take : DurakMove
 
-    /** «Бито» — стол отбит, раунд окончен. */
+    /** «Бито» — стол отбит, заход окончен. */
     data object Pass : DurakMove
 }
 
@@ -44,18 +44,21 @@ data class Battle(val attack: Card, val defense: Card? = null) {
 }
 
 /**
- * «Дурак» подкидной с переводом, 36 карт.
+ * «Дурак» подкидной с переводом, 36 карт, от двух до шести игроков.
  *
- * Три правила, о которых легко споткнуться, поэтому они явно зашиты
- * в код и вынесены сюда:
+ * Каждый играет за себя: атакующий ходит под соседа, остальные подкидывают.
+ * Правила, о которых легко споткнуться, поэтому они явно зашиты в код:
  *
- * 1. Кто отбился — тот и атакует в следующем раунде. Защищающийся,
- *    который забрал карты, свою атаку пропускает: ходит снова тот же
- *    игрок. Это классический вариант для игры вдвоём.
- * 2. Ходы за столом чередуются: положил карту — защищающийся ответил,
- *    только потом можно подкидывать. Пока на столе есть неотбитая карта,
- *    ход защищающегося, и атакующий ждёт. Раунд кончается явно — «бито»
- *    или «беру».
+ * 1. Кто отбился — тот и атакует в следующем заходе. Защищающийся, который
+ *    забрал карты, свою атаку пропускает: атака переходит через него к
+ *    следующему. На двоих это ровно «ходит снова тот же игрок».
+ * 2. Подкидывают по кругу. Право подкидывать идёт от игрока к игроку, минуя
+ *    защищающегося, и заход кончается только тогда, когда отказались все:
+ *    отказ одного передаёт право дальше, а не закрывает стол. Пока право не
+ *    вернулось, вторую карту положить нельзя — книга говорит это прямо:
+ *    «даже если у вас на руке окажется король, вы не можете выложить его,
+ *    пока право подкидывать снова не дойдёт до вас». Первым подкидывает
+ *    атакующий: пока от первой карты не отбились, заход ещё его.
  * 3. Перевод — это ход защищающегося, и только пока на столе нет ни
  *    одной отбитой карты: он кладёт карту того же достоинства, что уже
  *    на столе, и атакующим становится сам. Отбиваться теперь соседу, и
@@ -64,13 +67,13 @@ data class Battle(val attack: Card, val defense: Card? = null) {
  *    с `rules.transfer = false` выходит «подкидной» дурак, где
  *    защищающийся только отбивается или берёт.
  *
- * Партия считается оконченной, когда колода пуста и у кого-то кончились
- * карты: он вышел и выиграл, оставшийся с картами — «дурак». Если вышли
- * оба разом — ничья.
+ * Партия считается оконченной, когда колода пуста и вышел предпоследний:
+ * вышедший первым выиграл, оставшийся с картами — «дурак». Если вышли
+ * все разом — ничья.
  *
  * Порядок добора — четвёртое место, где легко ошибиться, и ошибка эта
  * невидима: карты из колоды достанутся не тем. По книге первым берёт тот,
- * кто начинал заход, а последним — тот, под кого ходили ([refillAll]).
+ * кто начинал заход, а последним — тот, под кого ходили ([refillOrder]).
  */
 class DurakGame private constructor(
     val trumpSuit: Suit,
@@ -81,13 +84,37 @@ class DurakGame private constructor(
     val rules: DurakRules = DurakRules.BOOK,
 ) : GameRules<DurakGame> {
 
+    /** Чьё сейчас право подкидывать. Ходит по кругу, минуя защищающегося. */
+    private var throwerSeat: Int = attackerSeat
+
+    /** Кто в этом заходе уже отказался подкидывать. */
+    private val passedThrowers = mutableSetOf<Int>()
+
+    /** Кто вышел из игры, в порядке выхода. Первый вышедший — победитель. */
+    private val exited = mutableListOf<Int>()
+
     val playerCount: Int get() = hands.size
 
-    /** Кто сейчас атакует. */
+    /** Кто сейчас атакует — чей это заход. */
     val attacker: Int get() = attackerSeat
 
-    /** Кто сейчас отбивается. */
-    val defender: Int get() = (attackerSeat + 1) % playerCount
+    /** Кто сейчас отбивается: следующий за атакующим, кто ещё в игре. */
+    val defender: Int get() = nextAlive(attackerSeat)
+
+    /**
+     * Чей ход. Экран раньше выводил очередь сам из «у кого есть ходы», и на
+     * двоих это сходилось; на троих и больше очередь надо знать точно — ею
+     * ходят и защищающийся, и подкидывающие по кругу.
+     */
+    val turn: Int
+        get() = when {
+            tableCards.isEmpty() -> attackerSeat
+            tableCards.any { !it.beaten } -> defender
+            else -> throwerSeat
+        }
+
+    /** Кто уже вышел из игры. */
+    fun exitedSeats(): List<Int> = exited.toList()
 
     val table: List<Battle> get() = tableCards.toList()
 
@@ -129,66 +156,90 @@ class DurakGame private constructor(
     /** Козырь есть у руки? Нужно для подсказок вроде «козырей нет». */
     fun hasTrump(seat: Int): Boolean = hands[seat].any { it.suit == trumpSuit }
 
+    // --- Места за столом --------------------------------------------------
+
+    /** Кто ещё в игре: у вышедших карт нет, и роли на них не переходят. */
+    private val aliveSeats: List<Int> get() = hands.indices.filter { it !in exited }
+
+    /** Следующее место по кругу, пропуская вышедших. */
+    private fun nextAlive(seat: Int): Int {
+        val alive = aliveSeats
+        if (alive.size < 2) return seat
+        var next = (seat + 1) % playerCount
+        while (next !in alive) next = (next + 1) % playerCount
+        return next
+    }
+
+    /**
+     * Следующий, за кем право подкидывать: по кругу и минуя защищающегося —
+     * он не подкидывает, он отбивается.
+     */
+    private fun nextThrower(seat: Int): Int {
+        if (aliveSeats.size < 2) return seat
+        val under = defender
+        var next = nextAlive(seat)
+        while (next == under) next = nextAlive(next)
+        return next
+    }
+
     // --- Ходы -------------------------------------------------------------
 
     fun legalMoves(seat: Int): List<DurakMove> {
-        if (finished || seat !in hands.indices) return emptyList()
+        if (finished || seat !in hands.indices || seat in exited) return emptyList()
 
         val hand = hands[seat]
         val moves = mutableListOf<DurakMove>()
         val unbeaten = tableCards.filter { !it.beaten }
 
-        when (seat) {
-            attackerSeat -> {
-                if (tableCards.isEmpty()) {
-                    // Первый ход в раунде — можно любую карту.
-                    hand.forEach { moves += DurakMove.Attack(it) }
-                } else {
-                    // Подкидывать можно, только когда защищающийся отбился от
-                    // всего, что уже лежит на столе. За столом ходы чередуются:
-                    // положил карту — получил ответ — положил следующую. Пока
-                    // лежит неотбитая карта, ход не наш, и второй раз положить
-                    // нельзя. Без этого правила атакующий вываливал на стол
-                    // несколько карт подряд, а защищающийся «молчал», потому
-                    // что приложение честно ждало его хода.
-                    if (unbeaten.isEmpty()) {
-                        if (tableCards.size < tableLimit()) {
-                            val ranksOnTable = tableCards
-                                .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
-                                .toSet()
-                            hand.filter { it.rank in ranksOnTable }
-                                .forEach { moves += DurakMove.Attack(it) }
-                        }
-                        moves += DurakMove.Pass
+        when {
+            // Пока на столе есть неотбитая карта, ход защищающегося. Пустая
+            // рука — не тупик: «беру» сказать можно всегда, иначе заход встал
+            // бы, если последнюю карту игрок положил на стол.
+            unbeaten.isNotEmpty() -> {
+                if (seat != defender) return emptyList()
+                unbeaten.forEach { battle ->
+                    val index = tableCards.indexOf(battle)
+                    hand.filter { beats(it, battle.attack) }
+                        .forEach { moves += DurakMove.Defend(it, index) }
+                }
+                // Перевод: пока не отбита ни одна карта, защищающийся может
+                // положить свою карту того же достоинства и уступить атаку
+                // соседу. У соседа должно хватить карт на весь стол вместе
+                // с этой — иначе перевод был бы способом подсунуть ему
+                // больше, чем он в силах отбить.
+                if (rules.transfer && tableCards.all { !it.beaten }) {
+                    val next = nextAlive(seat)
+                    val enoughCards = hands[next].size >= tableCards.size + 1
+                    if (enoughCards) {
+                        val ranksOnTable = tableCards
+                            .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
+                            .toSet()
+                        hand.filter { it.rank in ranksOnTable }
+                            .forEach { moves += DurakMove.Transfer(it) }
                     }
                 }
+                moves += DurakMove.Take
             }
 
-            defender -> {
-                if (unbeaten.isNotEmpty()) {
-                    unbeaten.forEach { battle ->
-                        val index = tableCards.indexOf(battle)
-                        hand.filter { beats(it, battle.attack) }
-                            .forEach { moves += DurakMove.Defend(it, index) }
-                    }
-                    // Перевод: пока не отбита ни одна карта, защищающийся может
-                    // положить свою карту того же достоинства и уступить атаку
-                    // соседу. У соседа должно хватить карт на весь стол вместе
-                    // с этой — иначе перевод был бы способом подсунуть ему
-                    // больше, чем он в силах отбить.
-                    if (rules.transfer && tableCards.all { !it.beaten }) {
-                        val next = (seat + 1) % playerCount
-                        val enoughCards = hands[next].size >= tableCards.size + 1
-                        if (enoughCards) {
-                            val ranksOnTable = tableCards
-                                .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
-                                .toSet()
-                            hand.filter { it.rank in ranksOnTable }
-                                .forEach { moves += DurakMove.Transfer(it) }
-                        }
-                    }
-                    moves += DurakMove.Take
+            // Стол пуст — заход начинает атакующий, и первую карту кладёт
+            // любую.
+            tableCards.isEmpty() -> {
+                if (seat != attackerSeat) return emptyList()
+                hand.forEach { moves += DurakMove.Attack(it) }
+            }
+
+            // Стол отбит целиком — подкидывает тот, до кого дошло право.
+            // Отказ здесь всегда возможен: нечем подкидывать или не хочется.
+            else -> {
+                if (seat != throwerSeat) return emptyList()
+                if (tableCards.size < tableLimit()) {
+                    val ranksOnTable = tableCards
+                        .flatMap { listOfNotNull(it.attack.rank, it.defense?.rank) }
+                        .toSet()
+                    hand.filter { it.rank in ranksOnTable }
+                        .forEach { moves += DurakMove.Attack(it) }
                 }
+                moves += DurakMove.Pass
             }
         }
         return moves
@@ -204,15 +255,23 @@ class DurakGame private constructor(
         val started = attackerSeat
         val under = defender
 
+        // Заход окончен этим ходом? От этого зависит добор: карты из колоды
+        // берут по концу захода, а не после каждого отказа подкинуть.
+        var roundOver = false
+
         when (move) {
             is DurakMove.Attack -> {
                 hands[seat].remove(move.card)
                 tableCards += Battle(move.card)
+                // Карта легла — заход продолжился, прежние отказы не в счёт.
+                passedThrowers.clear()
             }
 
             is DurakMove.Defend -> {
                 hands[seat].remove(move.card)
                 tableCards[move.tableIndex] = tableCards[move.tableIndex].copy(defense = move.card)
+                // Отбился от всего — право подкидывать идёт дальше по кругу.
+                if (tableCards.all { it.beaten }) throwerSeat = nextThrower(throwerSeat)
             }
 
             is DurakMove.Transfer -> {
@@ -221,24 +280,47 @@ class DurakGame private constructor(
                 // Атака перешла тому, кто перевёл: отбивается теперь сосед,
                 // а прежний атакующий встал на его место.
                 attackerSeat = seat
+                throwerSeat = attackerSeat
+                passedThrowers.clear()
             }
 
             DurakMove.Take -> {
                 hands[defender].addAll(tableCards.flatMap { listOfNotNull(it.attack, it.defense) })
                 tableCards.clear()
-                // Защищающийся пропустил свою атаку — ходит снова тот же игрок.
+                // Защищающийся пропустил свою атаку — ходит следующий за ним.
+                attackerSeat = nextAlive(defender)
+                roundOver = true
             }
 
             DurakMove.Pass -> {
-                discarded += tableCards.flatMap { listOfNotNull(it.attack, it.defense) }
-                tableCards.clear()
-                // Кто отбился — тот и атакует.
-                attackerSeat = defender
+                // Отказ не закрывает заход: право подкидывать идёт по кругу, и
+                // стол уходит в отбой только когда отказались все — тогда
+                // очередь возвращается к тому, кто отказался первым.
+                passedThrowers += seat
+                val next = nextThrower(seat)
+                if (next in passedThrowers) {
+                    discarded += tableCards.flatMap { listOfNotNull(it.attack, it.defense) }
+                    tableCards.clear()
+                    // Кто отбился — тот и атакует.
+                    attackerSeat = under
+                    roundOver = true
+                } else {
+                    throwerSeat = next
+                }
             }
         }
 
-        if (move is DurakMove.Take || move is DurakMove.Pass) refillAll(started, under)
+        if (roundOver) {
+            resetRound()
+            refillAll(started, under)
+        }
         checkEnd()
+    }
+
+    /** Новый заход: право подкидывать начинается с атакующего, отказы забыты. */
+    private fun resetRound() {
+        throwerSeat = attackerSeat
+        passedThrowers.clear()
     }
 
     /** Может ли [candidate] побить [target]: старше в той же масти или козырь. */
@@ -255,7 +337,8 @@ class DurakGame private constructor(
     }
 
     /**
-     * Добор до шести карт: сначала [first], потом [second].
+     * Добор до шести карт: первым берёт тот, кто начинал заход, последним —
+     * тот, под кого ходили, а между ними места идут по кругу ([refillOrder]).
      *
      * Порядок здесь не формальность, а правило, и записано оно в книге
      * отдельной строкой: первым берёт тот, кто начинал заход, а в самом
@@ -268,18 +351,40 @@ class DurakGame private constructor(
      * с `defender` называют не тех, кто заход начинал.
      */
     private fun refillAll(first: Int, second: Int) {
-        for (seat in listOf(first, second)) {
+        for (seat in refillOrder(first, second)) {
+            if (seat in exited) continue
             while (hands[seat].size < HAND_SIZE && !deck.isEmpty()) {
                 hands[seat] += deck.draw()
             }
         }
     }
 
+    /**
+     * Порядок добора: начинавший заход, дальше круг остальных, а тот, под
+     * кого ходили, — последний.
+     *
+     * Середину порядку книга не задаёт: за столом на двоих её и нет, а на
+     * троих и больше ничем, кроме круга, места не упорядочить. Круг — то же
+     * правило, по которому ходят и подкидывают.
+     */
+    private fun refillOrder(first: Int, second: Int): List<Int> {
+        val order = mutableListOf(first)
+        var seat = first
+        repeat(playerCount - 1) {
+            seat = (seat + 1) % playerCount
+            if (seat != second) order += seat
+        }
+        order += second
+        return order
+    }
+
     private fun checkEnd() {
         if (finished) return
         if (!deck.isEmpty()) return
-        // Пока на столе есть неотбитое, раунд не окончен.
+        // Пока на столе есть неотбитое, заход не окончен.
         if (tableCards.any { !it.beaten }) return
+
+        hands.indices.forEach { if (hands[it].isEmpty() && it !in exited) exited += it }
 
         val withCards = hands.indices.filter { hands[it].isNotEmpty() }
         when (withCards.size) {
@@ -291,9 +396,16 @@ class DurakGame private constructor(
 
             1 -> {
                 finished = true
-                winner = hands.indices.first { it != withCards.first() }
+                // Кто вышел первым — тот выиграл; последний с картами — дурак.
+                winner = exited.firstOrNull()
                 loser = withCards.first()
             }
+        }
+
+        // Атакующий вышел — заход переходит к следующему, кто ещё в игре.
+        if (!finished && attackerSeat in exited) {
+            attackerSeat = nextAlive(attackerSeat)
+            resetRound()
         }
     }
 
@@ -387,6 +499,11 @@ class DurakGame private constructor(
          * [checkEnd], что и в живой игре. Так в файле не приходится
          * держать «партия окончена» отдельным полем, которое может
          * разойтись с настоящим положением дел.
+         *
+         * Право подкидывать и отказы в сохранении не лежат: заход после
+         * подъёма начинается заново с атакующего. Потеря это или нет —
+         * зависит от того, когда записали партию, и хуже от неё никому не
+         * становится: отказы игроков не право, а память о ходе.
          */
         fun restore(
             trumpSuit: Suit,
@@ -416,13 +533,20 @@ class DurakGame private constructor(
             hands: List<List<Card>>,
             deck: List<Card> = emptyList(),
             attacker: Int = 0,
+            table: List<Battle> = emptyList(),
+            discarded: List<Card> = emptyList(),
             rules: DurakRules = DurakRules.BOOK,
-        ): DurakGame = DurakGame(
-            trumpSuit = trumpSuit,
-            deck = Deck(deck),
-            hands = hands.map { it.toMutableList() }.toMutableList(),
-            attackerSeat = attacker,
-            rules = rules,
-        )
+        ): DurakGame {
+            val game = DurakGame(
+                trumpSuit = trumpSuit,
+                deck = Deck(deck),
+                hands = hands.map { it.toMutableList() }.toMutableList(),
+                attackerSeat = attacker,
+                rules = rules,
+            )
+            game.tableCards += table
+            game.discarded += discarded
+            return game
+        }
     }
 }

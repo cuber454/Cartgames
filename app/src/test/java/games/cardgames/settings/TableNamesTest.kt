@@ -25,14 +25,18 @@ class TableNamesTest {
     fun `на двоих за столом только одно имя соперника`() {
         assertEquals(
             listOf("ты", "Петя"),
-            seatTitles(Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"), 2),
+            seatTitles(
+                Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"),
+                GAME_THOUSAND,
+                2,
+            ),
         )
     }
 
     /** Без имени на двоих место всё равно названо: «ты» и «Бот». */
     @Test
     fun `на двоих без имени соперник зовётся Ботом`() {
-        assertEquals(listOf("ты", "Бот"), seatTitles(Settings(), 2))
+        assertEquals(listOf("ты", "Бот"), seatTitles(Settings(), GAME_THOUSAND, 2))
     }
 
     /** На троих каждое место зовётся своим именем. */
@@ -40,7 +44,11 @@ class TableNamesTest {
     fun `третье место зовётся вторым именем`() {
         assertEquals(
             listOf("ты", "Петя", "Вася"),
-            seatTitles(Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"), 3),
+            seatTitles(
+                Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"),
+                GAME_THOUSAND,
+                3,
+            ),
         )
     }
 
@@ -49,7 +57,7 @@ class TableNamesTest {
     fun `без имени места зовутся Бот и Второй бот`() {
         assertEquals(
             listOf("ты", "Бот", "Второй бот"),
-            seatTitles(Settings(), 3),
+            seatTitles(Settings(), GAME_THOUSAND, 3),
         )
     }
 
@@ -58,8 +66,48 @@ class TableNamesTest {
     fun `одни пробелы вместо имени считаются пустым полем`() {
         assertEquals(
             listOf("ты", "Бот", "Второй бот"),
-            seatTitles(Settings(botNameThousand = "   ", botNameThousandSecond = "  "), 3),
+            seatTitles(
+                Settings(botNameThousand = "   ", botNameThousandSecond = "  "),
+                GAME_THOUSAND,
+                3,
+            ),
         )
+    }
+
+    /**
+     * У «Дурака» свои имена на оба места. За тем же столом соперников может
+     * быть двое, и второму имя нужно своё — иначе за столом на троих оба
+     * звались бы одинаково, и «ходит Бот, ходит Бот» не различить.
+     */
+    @Test
+    fun `у дурака свои имена на оба места`() {
+        assertEquals(
+            listOf("ты", "Петя", "Вася"),
+            seatTitles(
+                Settings(botNameDurak = "Петя", botNameDurakSecond = "Вася"),
+                GAME_DURAK,
+                3,
+            ),
+        )
+        // Имя «Тысячи» к столу дурака не относится: там сидит кто-то другой.
+        assertEquals(
+            listOf("ты", "Бот"),
+            seatTitles(Settings(botNameThousand = "Петя"), GAME_DURAK, 2),
+        )
+    }
+
+    /** Имена у игр свои: записанное за дураком не зовёт никого в «Козле». */
+    @Test
+    fun `имя второго соперника записывается той игре, чьи настройки правят`() {
+        val settings = withBotNameSecond(
+            withBotNameSecond(Settings(), GAME_DURAK, "Петя"),
+            GAME_THOUSAND,
+            "Вася",
+        )
+        assertEquals("Петя", botTitleSecond(settings, GAME_DURAK))
+        assertEquals("Вася", botTitleSecond(settings, GAME_THOUSAND))
+        // В «Козле» второго места нет, и имя ему записывать некуда.
+        assertEquals("Второй бот", botTitleSecond(withBotNameSecond(settings, GAME_KOZEL, "Гриша"), GAME_KOZEL))
     }
 
     /**
@@ -88,9 +136,24 @@ class TableNamesTest {
      */
     @Test
     fun `число мест за столом зажато двумя и тремя`() {
-        assertEquals(2, seatsAtTable(Settings(thousandSeats = 0)))
-        assertEquals(2, seatsAtTable(Settings(thousandSeats = 1)))
-        assertEquals(3, seatsAtTable(Settings(thousandSeats = 4)))
-        assertEquals(3, seatsAtTable(Settings(thousandSeats = 7)))
+        assertEquals(2, seatsAtTable(Settings(thousandSeats = 0), GAME_THOUSAND))
+        assertEquals(2, seatsAtTable(Settings(thousandSeats = 1), GAME_THOUSAND))
+        assertEquals(3, seatsAtTable(Settings(thousandSeats = 4), GAME_THOUSAND))
+        assertEquals(3, seatsAtTable(Settings(thousandSeats = 7), GAME_THOUSAND))
+        assertEquals(2, seatsAtTable(Settings(durakSeats = 0), GAME_DURAK))
+        assertEquals(3, seatsAtTable(Settings(durakSeats = 9), GAME_DURAK))
+    }
+
+    /**
+     * Число мест у каждой игры своё: выбор за одним столом не переставляет
+     * чужой. «Козёл» пока играется вдвоём, и настройки у него нет вовсе —
+     * там число мест не спрашивают, а знают.
+     */
+    @Test
+    fun `число мест у каждой игры своё`() {
+        val settings = Settings(thousandSeats = 3, durakSeats = 2)
+        assertEquals(3, seatsAtTable(settings, GAME_THOUSAND))
+        assertEquals(2, seatsAtTable(settings, GAME_DURAK))
+        assertEquals(2, seatsAtTable(Settings(thousandSeats = 3), GAME_KOZEL))
     }
 }

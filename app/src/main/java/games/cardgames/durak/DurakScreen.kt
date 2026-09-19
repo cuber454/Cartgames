@@ -43,12 +43,13 @@ import games.cardgames.score.Score
 import games.cardgames.score.saveScore
 import games.cardgames.settings.botEngine
 import games.cardgames.settings.botSpeaksAlone
-import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
+import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.FIRST_BOT_SEAT
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
@@ -72,9 +73,18 @@ import games.engine.durak.DurakMove
 import kotlinx.coroutines.delay
 import kotlin.random.Random
 
-/** Место игрока за столом. Бот — второй. */
+/**
+ * Место игрока за столом. Соперники — все прочие места по кругу.
+ *
+ * Игрок всегда нулевой, а соперников бывает один или двое: «Дурак» садится и
+ * на двоих, и на троих (GAMES.md). Поэтому места здесь не два числа, а
+ * список — кто именно ходит, спрашивается у партии, а не выводится из
+ * числа мест на экране.
+ */
 private const val PLAYER = 0
-private const val BOT = 1
+
+/** Больше трёх за стол не садится — столько и синтезаторов заводим. */
+private const val MAX_SEATS = 3
 
 /** Пауза перед ходом бота, чтобы не тараторил. */
 private const val BOT_DELAY_MS = 700L
@@ -110,8 +120,14 @@ fun DurakScreen(
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
 
-    // Как звать соперника. Пусто в настройках — «Бот», как было до имени.
-    val bot = botTitle(settings, GAME_DURAK)
+    val game = session.game
+
+    // Как звать соперников по местам: место игрока — «ты», у прочих своё имя.
+    // Число мест берём у партии, а не у настроек: партия помнит стол, за
+    // которым её начали, и смена настройки посреди неё имён не переписывает.
+    val names = seatTitles(settings, GAME_DURAK, game.playerCount)
+    // Соперники по местам. На двоих он один, на троих — двое.
+    val bots = (1 until game.playerCount).toList()
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -145,6 +161,33 @@ fun DurakScreen(
             ),
         )
     }
+    // Второй соперник заводится, только когда за столом трое: на двоих его
+    // синтезатор был бы движком, которого никто не слышит.
+    val botSpeakerSecond = remember(
+        settings.engine,
+        settings.botEngineDurakSecond,
+        settings.voice,
+        settings.botVoiceDurakSecond,
+        settings.botRateDurakSecond,
+        settings.rate,
+        game.playerCount,
+    ) {
+        if (game.playerCount < 3) {
+            null
+        } else {
+            Speaker(
+                context = context,
+                rate = settings.botRateDurakSecond,
+                enginePackage = botEngine(settings.botEngineDurakSecond, settings.engine),
+                voiceName = botVoice(
+                    settings.botVoiceDurakSecond,
+                    settings.voice,
+                    settings.botEngineDurakSecond,
+                    settings.engine,
+                ),
+            )
+        }
+    }
     // Бот со своим синтезатором или своим голосом говорит им и при работающем
     // скринридере: тот озвучивает приложение, а соперник — своим голосом
     // (SETTINGS.md, 8).
@@ -154,20 +197,31 @@ fun DurakScreen(
         settings.botEngineDurak,
         settings.engine,
     )
+    val botSecondApart = botSpeaksAlone(
+        settings.botVoiceDurakSecond,
+        settings.voice,
+        settings.botEngineDurakSecond,
+        settings.engine,
+    )
     val sounds = remember { TableSounds(context) }
     val vibrations = remember { Vibrations(context) }
-    DisposableEffect(speaker, botSpeaker) {
-        onDispose {
-            speaker.shutdown()
-            botSpeaker.shutdown()
-            sounds.release()
-        }
-    }
+    // Гасим каждый синтезатор порознь: второй заводится и пропадает вместе с
+    // третьим местом за столом, а общий onDispose на всех погасил бы заодно и
+    // те, что остались в работе.
+    DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
+    DisposableEffect(botSpeaker) { onDispose { botSpeaker.shutdown() } }
+    DisposableEffect(botSpeakerSecond) { onDispose { botSpeakerSecond?.shutdown() } }
+    DisposableEffect(sounds) { onDispose { sounds.release() } }
 
     val rng = remember { Random.Default }
-    // Речь бота живёт выше партии: мешки зачинов должны переживать и
+    // Речь соперников живёт выше партии: мешки зачинов должны переживать и
     // перерисовки, и переходы в настройки, иначе повторы вернутся.
-    val talker = remember { BotTalker(rng) }
+    //
+    // Свой рассказчик каждому месту, а не один на стол: мешок зачинов общий
+    // на всех — и двое соперников тянули бы из него по очереди, повторяя
+    // друг за другом. За столом это слышно как один человек, говорящий
+    // попеременно то одним, то другим голосом.
+    val talkers = remember { List(MAX_SEATS) { BotTalker(rng) } }
     // Открыто ли маленькое меню «Ещё» в углу экрана.
     var menuOpen by remember { mutableStateOf(false) }
     // Открыт ли выбор карты для перевода.
@@ -200,10 +254,13 @@ fun DurakScreen(
     // (скринридер включают посреди партии, скорость крутят в настройках).
     val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
-    val voice = remember(speaker, botSpeaker, botApart) {
+    val voice = remember(speaker, botSpeaker, botSpeakerSecond, botApart, botSecondApart) {
         TableVoice(
             speaker = speaker,
-            botSpeakers = mapOf(BOT to BotVoice(botSpeaker, botApart)),
+            botSpeakers = buildMap {
+                put(FIRST_BOT_SEAT, BotVoice(botSpeaker, botApart))
+                botSpeakerSecond?.let { put(2, BotVoice(it, botSecondApart)) }
+            },
             view = view,
             speech = { speechNow.value },
             rate = { rateNow.value },
@@ -217,13 +274,16 @@ fun DurakScreen(
      * Ход бота: реплики можно выключить, тогда он молча кладёт карты.
      * [speak] = false — бот промолчал по своей воле (см. [BotTalker]); фразу
      * всё равно запоминаем, её повторит кнопка «Повтори».
+     *
+     * Место задаёт голос: за столом на троих соперников двое, и каждый
+     * говорит своим (SETTINGS.md, 8).
      */
-    fun sayBotMove(text: String, speak: Boolean = true) {
+    fun sayBotMove(seat: Int, text: String, speak: Boolean = true) {
         if (!settings.botTalk || !speak) {
             session.lastPhrase = text
             return
         }
-        voice.sayBot(text)
+        voice.sayBot(text, seat = seat)
     }
 
     fun soundFor(move: DurakMove) {
@@ -252,13 +312,16 @@ fun DurakScreen(
 
     /** Партия кончилась — считаем счёт и говорим итог. */
     fun finishIfOver() {
-        val game = session.game
         if (!game.finished || session.finishSaid) return
         session.finishSaid = true
 
-        val result = when (game.winner) {
-            PLAYER -> Outcome.WIN
-            BOT -> Outcome.LOSS
+        // На троих исходов не два, а три: первый вышедший выиграл, последний
+        // с картами — дурак, а середина не выиграла и не проиграла. Ничьей
+        // это и называем: засчитать её победой значило бы записать в счёт
+        // то, чего за столом не было.
+        val result = when {
+            game.winner == PLAYER -> Outcome.WIN
+            game.loser == PLAYER -> Outcome.LOSS
             else -> Outcome.DRAW
         }
         session.outcome = result
@@ -279,7 +342,7 @@ fun DurakScreen(
             }
         }
         voice.say(
-            finishPhrase(game, next, bot),
+            finishPhrase(game, next, names),
             afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
         )
     }
@@ -296,40 +359,47 @@ fun DurakScreen(
         // Раздача шумит почти семь десятых секунды: скажи мы сразу — голос
         // утонул бы в шорохе карт. Выключенные звуки — ждать нечего.
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
-        voice.say(dealPhrase(session.game), afterMs = afterMs)
+        // Имена берём у новой партии, а не у прежней: смена «за столом трое»
+        // пересдаёт партию здесь же, и старое число мест назвало бы за
+        // столом не тех, кто за ним сел.
+        val fresh = session.game
+        voice.say(
+            dealPhrase(fresh, seatTitles(settings, GAME_DURAK, fresh.playerCount)),
+            afterMs = afterMs,
+        )
     }
 
     // Ход бота: играем за него все ходы подряд, пока ход не вернётся к игроку.
     // Эффект перезапускается при возвращении с экрана настроек и продолжает
     // партию с того же места.
     LaunchedEffect(session.tick) {
-        val game = session.game
         var guard = 0
         var played = false
         // Сколько карт бот положил за эту серию. По одной его реплики
         // складываются в картину, по нескольким — уже нет.
         var botCards = 0
-        while (!game.finished &&
-            game.legalMoves(PLAYER).isEmpty() &&
-            game.legalMoves(BOT).isNotEmpty() &&
-            guard++ < 60
-        ) {
+        // Чей ход — спрашиваем у партии, а не выводим из числа мест: на троих
+        // очередь идёт по кругу, и ход принадлежит то одному сопернику, то
+        // другому (DurakSeatsTest). Пока ход не у игрока — играем за того,
+        // чей он.
+        while (!game.finished && game.turn != PLAYER && guard++ < 300) {
+            val seat = game.turn
             // Ждём не «полсекунды», а пока договорит предыдущая фраза:
             // иначе бот перебивает сам себя и слышно только последнее слово.
             delay(voice.waitMs())
-            val move = BotPlayer.chooseMove(game, BOT, settings.botDifficultyDurak, rng) ?: break
+            val move = BotPlayer.chooseMove(game, seat, settings.botDifficultyDurak, rng) ?: break
             soundFor(move)
             // Фразу спрашиваем до хода: «последняя карта» и «колода вышла» —
             // это про состояние до него, после хода карта уже не последняя.
-            val line = talker.line(
+            val line = talkers[seat].line(
                 move = move,
                 difficulty = settings.botDifficultyDurak,
                 trumpSuit = game.trumpSuit,
                 tableEmpty = game.table.isEmpty(),
-                ownHandSize = game.handOf(BOT).size,
+                ownHandSize = game.handOf(seat).size,
                 deckSize = game.deckSize(),
             )
-            game.apply(BOT, move)
+            game.apply(seat, move)
             // Звук хода и реплика бота стартуют в один момент и налезают
             // друг на друга. Разводим: сначала звук, потом речь. Молчащему
             // боту ждать незачем.
@@ -337,7 +407,7 @@ fun DurakScreen(
                 val gap = soundGap(move)
                 if (gap > 0) delay(gap + PHRASE_GAP_MS)
             }
-            sayBotMove(line.text, line.speak)
+            sayBotMove(seat, line.text, line.speak)
             // Пишем после каждого хода: если приложение прибьют посреди
             // серии ходов бота, партия не откатится к её началу.
             session.persist()
@@ -377,10 +447,10 @@ fun DurakScreen(
             // сказать, что за столом, и чей ход.
             session.restored -> {
                 session.acceptRestored()
-                voice.say(resumePhrase(session.game), whenReady = true)
+                voice.say(resumePhrase(game, names), whenReady = true)
             }
 
-            session.lastPhrase.isBlank() -> voice.say(dealPhrase(session.game), whenReady = true)
+            session.lastPhrase.isBlank() -> voice.say(dealPhrase(game, names), whenReady = true)
 
             // Вернулись с другого экрана — напоминаем, на чём остановились.
             // lastPhrase не трогаем: «Продолжаем» — это не фраза для
@@ -410,8 +480,12 @@ fun DurakScreen(
     }
 
     fun allowedPhrase(): String {
-        val moves = session.game.legalMoves(PLAYER)
-        if (moves.isEmpty()) return "Сейчас ход соперника, подожди."
+        val moves = game.legalMoves(PLAYER)
+        if (moves.isEmpty()) {
+            // Партия кончена — ждать некого: ходов нет ни у кого, и «сейчас
+            // ходит» назвало бы того, кто уже вышел.
+            return if (game.finished) "Партия окончена." else "Сейчас ходит ${names[game.turn]}, подожди."
+        }
         val parts = mutableListOf<String>()
         moves.filterIsInstance<DurakMove.Attack>().forEach { parts += "положить ${it.card.spoken()}" }
         moves.filterIsInstance<DurakMove.Defend>().forEach { parts += "отбиться картой ${it.card.spoken()}" }
@@ -439,7 +513,6 @@ fun DurakScreen(
         play(move)
     }
 
-    val game = session.game
     val moves = game.legalMoves(PLAYER)
     val transfers = moves.filterIsInstance<DurakMove.Transfer>()
 
@@ -448,10 +521,30 @@ fun DurakScreen(
         // стол не отбит, атакующий формально игрок, но играть ему нечем:
         // ход защищающегося. По «attacker == PLAYER» строка врала ровно в
         // этот момент — обещала ход там, где игрок ничего сделать не мог.
-        append(if (moves.isNotEmpty()) "Твой ход." else "Ход соперника.")
+        append(
+            when {
+                game.finished -> "Партия окончена."
+                moves.isNotEmpty() -> "Твой ход."
+                // Соперник один — «ход соперника» и есть его имя; на троих
+                // их двое, и «соперник» перестаёт что-либо называть, поэтому
+                // место зовётся своим именем (SETTINGS.md, 8).
+                bots.size == 1 -> "Ход соперника."
+                else -> "Ходит ${names[game.turn]}."
+            },
+        )
         append(" Козырь — ${game.trumpSuit.title}.")
         append(" В колоде ${game.deckSize()}.")
-        append(" У соперника ${game.handOf(BOT).size}.")
+        // Карты соперников: на двоих — одно число, на троих — по местам. За
+        // столом на троих важно, у кого сколько осталось, а имя при числе
+        // звучит справкой, а не речью, и падежа не требует.
+        append(
+            if (bots.size == 1) {
+                " У соперника ${game.handOf(bots.first()).size}."
+            } else {
+                " У соперников: " +
+                    bots.joinToString(", ") { "${names[it]} — ${game.handOf(it).size}" } + "."
+            },
+        )
     }
 
     // Порядок карт — ровно тот, что выбран в настройках, и ничего поверх:
@@ -721,13 +814,28 @@ fun DurakScreen(
     }
 }
 
-private fun dealPhrase(game: DurakGame): String {
+/**
+ * Чей ход — словами: «Твой ход» или имя того, кто ходит.
+ *
+ * На двоих соперник один, и «ход соперника» называет его целиком — так было
+ * до третьего места, и так остаётся. На троих их двое, и «соперник» уже
+ * ничего не называет: место зовётся своим именем. Имя стоит в именительном
+ * рядом с глаголом («Ходит Петя») — склонять произвольное имя программа не
+ * умеет (SETTINGS.md, 8).
+ */
+private fun turnPhrase(game: DurakGame, names: List<String>): String = when {
+    game.finished -> "Партия окончена."
+    game.legalMoves(PLAYER).isNotEmpty() -> "Твой ход."
+    names.size <= 2 -> "Ход соперника."
+    else -> "Ходит ${names[game.turn]}."
+}
+
+private fun dealPhrase(game: DurakGame, names: List<String>): String {
     // Коротко: козырь и чей ход. Перечислять карты и порядок не надо —
     // карты игрок слушает свайпом по руке, и вслух они превращаются в
     // длинную ленту, которую он всё равно не удержит; порядок он выбрал
     // сам в настройках. Стол при раздаче пуст — о нём молчим.
-    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Твой ход." else "Ход соперника."
-    return "Раздача. Козырь — ${game.trumpSuit.title}. $turn"
+    return "Раздача. Козырь — ${game.trumpSuit.title}. ${turnPhrase(game, names)}"
 }
 
 /**
@@ -735,12 +843,12 @@ private fun dealPhrase(game: DurakGame): String {
  * после случайного выхода и не помнит стол — напоминаем положение дел,
  * а не «продолжаем», за которым ничего не стоит.
  */
-private fun resumePhrase(game: DurakGame): String {
-    val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Ход твой." else "Ход соперника."
+private fun resumePhrase(game: DurakGame, names: List<String>): String {
     // Стол пуст — о нём молчим: «на столе пусто» это не сведение, а шум.
     val table = if (game.table.isEmpty()) "" else " На столе: ${game.spokenTable()}."
     return "Продолжаем партию. Карт у тебя: ${game.handOf(PLAYER).size}, " +
-        "в колоде: ${game.deckSize()}, козырь — ${game.trumpSuit.title}.$table $turn"
+        "в колоде: ${game.deckSize()}, козырь — ${game.trumpSuit.title}.$table " +
+        turnPhrase(game, names)
 }
 
 /**
@@ -754,18 +862,29 @@ private fun ownMovePhrase(move: DurakMove): String = when (move) {
     is DurakMove.Attack -> "Кладёшь ${move.card.spoken()}."
     is DurakMove.Defend -> "Отбиваешься картой ${move.card.spoken()}."
     // Не «отбиваться боту»: дательный падеж имени программа не выведет.
-    is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться сопернику."
+    // «Соседу» — потому что на троих соперников двое, и перевод уходит
+    // следующему за столом, а не «сопернику» вообще.
+    is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться соседу."
     DurakMove.Take -> "Ты забираешь карты со стола."
     DurakMove.Pass -> "Ты сказал бито. Стол в отбой."
 }
 
-private fun finishPhrase(game: DurakGame, score: Score, bot: String = "Бот"): String {
+private fun finishPhrase(game: DurakGame, score: Score, names: List<String>): String {
     // Про соперника — в настоящем времени: «Меркурий вышел» верно только
     // для мужского имени, а имя игрок выбирает любое (SETTINGS.md, 8).
-    val result = when (game.winner) {
-        PLAYER -> "Ты вышел. $bot — дурак."
-        BOT -> "$bot выходит, у тебя остались карты. Ты дурак."
-        else -> "Партия окончена, оба вышли. Ничья."
+    val winner = game.winner
+    val loser = game.loser
+    val result = when {
+        winner == null -> "Партия окончена, карт ни у кого не осталось. Ничья."
+        winner == PLAYER && loser != null -> "Ты вышел. ${names[loser]} — дурак."
+        loser == PLAYER && winner != null ->
+            "${names[winner]} выходит, у тебя остались карты. Ты дурак."
+
+        // На троих игрок может быть и ни тем, ни другим: вышел вторым —
+        // значит не выиграл и не проиграл, и называть это надо как есть.
+        winner != null && loser != null -> "${names[winner]} вышел, дурак — ${names[loser]}."
+
+        else -> "Партия окончена."
     }
     return "$result ${score.spoken()}"
 }

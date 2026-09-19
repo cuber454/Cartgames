@@ -10,6 +10,7 @@ import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.loadScore
 import games.cardgames.settings.loadSettings
+import games.cardgames.settings.seatsAtTable
 import games.engine.durak.DurakGame
 import games.engine.durak.DurakRules
 import games.engine.durak.DurakSave
@@ -28,11 +29,27 @@ import games.engine.durak.DurakSave
  * Поэтому пишем молча после каждого хода, а решение «продолжать или
  * начать новую» переносим в момент возвращения, где оно уместно.
  */
+/**
+ * Сколько мест за столом для новой партии — сколько их в настройках.
+ *
+ * В самой партии число мест уже записано (DurakSave пишет руки по местам), и
+ * поднятая с диска партия продолжается за своим столом, а не за тем, что
+ * стоит в настройках сейчас: иначе смена настройки посреди партии пересдала
+ * бы её на другое число игроков.
+ */
+private fun seatsForNewGame(context: Context): Int =
+    seatsAtTable(loadSettings(context), GAME_DURAK)
+
 class DurakSession(context: Context) {
 
     private val appContext = context.applicationContext
 
-    var game by mutableStateOf(DurakGame.start())
+    /**
+     * Партия. Число мест берётся из настроек, а не из партии: партия его
+     * помнит сама (DurakSave), и поднятая с диска продолжается за своим
+     * столом, а смена настройки пересдаёт только следующую.
+     */
+    var game by mutableStateOf(DurakGame.start(playerCount = seatsForNewGame(appContext)))
         private set
 
     /**
@@ -90,10 +107,17 @@ class DurakSession(context: Context) {
      * По договорённости «дурак ходит первым» первый ход отдаётся проигравшему
      * прошлую партию. Кто это, знает только доигранная партия — и знает ровно
      * до тех пор, пока мы её не выбросили, поэтому спрашиваем до, а не после.
+     *
+     * Число мест берём из настроек заново: смена «за столом трое» — это про
+     * следующую партию, и следующая начинается здесь.
      */
     fun restart(rules: DurakRules = DurakRules.BOOK) {
         val loserLeads = game.loser?.takeIf { rules.loserLeads }
-        game = DurakGame.start(rules = rules, firstAttacker = loserLeads)
+        game = DurakGame.start(
+            playerCount = seatsForNewGame(appContext),
+            rules = rules,
+            firstAttacker = loserLeads,
+        )
         lastPhrase = ""
         outcome = null
         finishSaid = false
