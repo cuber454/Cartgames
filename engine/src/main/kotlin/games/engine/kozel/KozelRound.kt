@@ -65,9 +65,10 @@ sealed interface KozelMove : Move {
  * оставшихся считает свои (Катерина, 19.09) — поэтому запись идёт по местам,
  * а не одному проигравшему: за столом на троих проигравших двое.
  *
- * [winner] пуст только при ничейной «рыбе» — тогда никто никому ничего не
- * пишет, и все [written] нули. [fish] говорит, чем раунд кончился: выходом
- * или закрытой линией.
+ * [winner] пуст, когда раунд кончился «рыбой» и рука легче всех не одна:
+ * первого места нет, но [written] при этом не все нули — пишут все, у кого
+ * рука тяжелее. [fish] говорит, чем раунд кончился: выходом или закрытой
+ * линией.
  */
 data class RoundScore(
     val winner: Int?,
@@ -249,24 +250,27 @@ class KozelRound private constructor(
     /**
      * Итог раунда: вышедший не пишет ничего, каждый из оставшихся — свои.
      *
-     * При «рыбе» выигрывает тот, у кого рука легче всех, и пишут остальные,
-     * каждый по своей руке. Легче всех оказалось у двоих — раунд ничейный,
-     * и не пишет никто: за столом на троих это тот же случай, что и равные
-     * руки вдвоём, только делят его не двое, а сколько угодно.
+     * При «рыбе» правило то же (KOZEL.md, 2.6 — «одно правило на оба конца
+     * раунда»): не пишет тот, у кого рука легче всех, — она и выиграла, —
+     * а пишут все остальные, каждый по своей руке. Легче всех оказалось у
+     * двоих — первого места нет, и раунд ничейный, но запись остальным это
+     * не отменяет: за столом на троих третий-то свою руку оставил, и она
+     * ему так же в счёт. Вдвоём из этого выходит прежнее: при равных руках
+     * оба легче всех, и не пишет никто (KOZEL.md, 2.5).
      */
     fun score(): RoundScore {
         check(finished) { "раунд ещё идёт" }
 
         val hands = List(seats) { handPoints(it) }
-        val winner = out ?: run {
-            val lightest = hands.min()
-            hands.indices.singleOrNull { hands[it] == lightest }
-                ?: return RoundScore(null, List(seats) { 0 }, fish = true)
+        out?.let { winner ->
+            return RoundScore(winner, List(seats) { if (it == winner) 0 else hands[it] }, fish = false)
         }
+
+        val lightest = hands.min()
         return RoundScore(
-            winner = winner,
-            written = List(seats) { if (it == winner) 0 else hands[it] },
-            fish = fish,
+            winner = hands.indices.singleOrNull { hands[it] == lightest },
+            written = List(seats) { if (hands[it] == lightest) 0 else hands[it] },
+            fish = true,
         )
     }
 
