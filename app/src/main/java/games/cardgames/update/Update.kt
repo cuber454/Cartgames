@@ -164,8 +164,15 @@ object Update {
 
     /** Чем кончился заход к установщику. */
     sealed interface Install {
-        /** Намерение готово: осталось показать системный экран установки. */
-        data class Ready(val intent: Intent) : Install
+        /**
+         * Намерение готово: осталось показать системный экран установки.
+         *
+         * [installer] — имя пакета, который этот экран покажет, если телефон
+         * его назвал. Это не условие, а след для журнала: по нему видно, ушло
+         * ли намерение системному установщику или не ушло никому, — а гадать
+         * об этом потом нечем, окно чужое и в наш журнал ничего не пишет.
+         */
+        data class Ready(val intent: Intent, val installer: String? = null) : Install
 
         /**
          * Ставить пока нельзя: Android спрашивает разрешение на установку из
@@ -370,17 +377,34 @@ object Update {
     fun install(context: Context, release: Release): Install {
         val apk = apkFile(context, release)
         if (!apk.isFile || apk.length() == 0L) return Install.Failed("сборка ещё не скачана")
-        if (!canInstall(context)) return Install.NeedsPermission(permissionIntent(context))
+        if (!canInstall(context)) {
+            Journal.note("обновление", "ставим нельзя: разрешение на установку из приложения не выдано")
+            return Install.NeedsPermission(permissionIntent(context))
+        }
         return runCatching {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
-            Install.Ready(
-                Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "application/vnd.android.package-archive")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                },
-            )
-        }.getOrElse { Install.Failed(it.message ?: it.javaClass.simpleName) }
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            Install.Ready(intent, installerOf(context, intent))
+        }.getOrElse {
+            Journal.note("обновление", "намерение установки не собралось: ${it.message ?: it.javaClass.simpleName}")
+            Install.Failed(it.message ?: it.javaClass.simpleName)
+        }
     }
+
+    /**
+     * Кто в телефоне возьмётся показать системное окно установки.
+     *
+     * Пусто — не приговор и не отказ: на Android 11 и новее приложение видит
+     * чужие пакеты, только если спросило о них в `<queries>` (см. манифест).
+     * Ответ идёт в журнал: когда окно не появилось, по одной этой строке видно,
+     * было ли кому его показывать.
+     */
+    private fun installerOf(context: Context, intent: Intent): String? = runCatching {
+        context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
+    }.getOrNull()
 
     /**
      * Разрешено ли приложению ставить сборки. С Android 8 это отдельное

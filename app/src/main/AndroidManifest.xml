@@ -22,6 +22,16 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+
+        <!-- Кто в телефоне берётся показать системное окно установки. Заявка
+             нужна не для того, чтобы окно открылось, а чтобы приложение могло
+             узнать, кто его откроет: с Android 11 чужие пакеты ему не видны,
+             и без этой строки resolveActivity отвечает «никто» даже там, где
+             установщик на месте. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
     </queries>
 
     <application
