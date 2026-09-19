@@ -59,7 +59,9 @@ import games.cardgames.speech.speech
 import games.cardgames.speech.speechMs
 import games.cardgames.update.Update
 import games.engine.durak.Difficulty
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -90,6 +92,19 @@ private const val PERMISSION_WAIT_MS = 5 * 60 * 1000L
  * не сообщает, а открывать окно поверх недослушанного объяснения нельзя.
  */
 private const val READER_TAIL_MS = 1500L
+
+/**
+ * Корутина захода к установщику — на всё приложение, а не на экран.
+ *
+ * Объяснение перед системным окном длинное: при скринридере под него уходит
+ * тринадцать секунд. Запуск, привязанный к экрану (`rememberCoroutineScope`),
+ * отменяется вместе с экраном — и молча: ни окна, ни ошибки, ни строки в
+ * журнале. 19.09 так и вышло: объяснение прозвучало в 18:22:08, настройки
+ * открылись в 18:22:14, и окна не было ни тогда, ни потом — ждать его стало
+ * некому. Экран приходит и уходит, а начатая установка обязана дойти до
+ * системного окна.
+ */
+private val INSTALL_SCOPE = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 /** Образец речи: по нему игрок и выбирает голос — на слух, а не по названию. */
 private const val SAMPLE = "Так будет звучать игра. Козырь — пики, у тебя семёрка червей."
@@ -511,6 +526,9 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * поверх окна объяснение обрывается на первом слове. Своё время приложение
      * знает ([speechMs]), а скринридер о конце чтения не сообщает — под ним
      * держим запас ([READER_TAIL_MS]).
+     *
+     * Отсчёт идёт на [INSTALL_SCOPE], а не на корутине экрана: экран за это
+     * время успевает уйти, и дело всё равно должно случиться.
      */
     fun sayThen(text: String, then: () -> Unit) {
         announce(text)
@@ -519,7 +537,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             Speech.READER -> speechMs(text, 1f) + READER_TAIL_MS
             Speech.NONE -> 0L
         }
-        scope.launch {
+        // Сколько ждать окна — в журнал: по этой строке видно, когда его
+        // спрашивать, если игрок скажет, что окна не было.
+        Journal.note("обновление", "системное окно — через $wait мс")
+        INSTALL_SCOPE.launch {
             delay(wait)
             then()
         }
