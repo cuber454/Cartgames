@@ -149,6 +149,9 @@ fun ThousandScreen(
         Speaker(
             context = context,
             rate = settings.botRateThousand,
+            // Имя для журнала: за столом говорят три синтезатора, и запись
+            // без имени читается как одна речь.
+            title = "соперник",
             enginePackage = botEngine(settings.botEngineThousand, settings.engine),
             voiceName = botVoice(
                 settings.botVoiceThousand,
@@ -175,6 +178,7 @@ fun ThousandScreen(
             Speaker(
                 context = context,
                 rate = settings.botRateThousandSecond,
+                title = "второй соперник",
                 enginePackage = botEngine(settings.botEngineThousandSecond, settings.engine),
                 voiceName = botVoice(
                     settings.botVoiceThousandSecond,

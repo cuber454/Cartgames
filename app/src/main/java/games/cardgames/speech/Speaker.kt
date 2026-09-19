@@ -37,6 +37,13 @@ class Speaker(
      * равно надо чем-то выставить.
      */
     private val pitch: Float = 1.0f,
+    /**
+     * Как этот синтезатор звать в журнале: «приложение», «соперник», «второй
+     * соперник». За столом говорят несколько синтезаторов, и запись без имени
+     * читается как одна речь — по ней не видно, чей это был голос. Имя нужно
+     * только для этого: на звук оно не влияет.
+     */
+    private val title: String = "приложение",
 ) : TextToSpeech.OnInitListener {
 
     private val appContext = context.applicationContext
@@ -58,6 +65,13 @@ class Speaker(
      */
     private var pendingVoice: String? = null
     private var pendingPitch: Float? = null
+
+    /**
+     * Проба попросила вернуть движку его голос по умолчанию —
+     * `previewVoice(null, …)`. Только этой просьбой голос движка и ставится:
+     * во всех прочих случаях он не трогается (см. [applyPendingVoice]).
+     */
+    private var pendingDefault = false
 
     /** Позвать, когда синтезатор поднялся: экран настроек по этому сигналу
      *  перечитывает список голосов. */
@@ -144,6 +158,23 @@ class Speaker(
         // запомнена и приезжает здесь — иначе первый образец прозвучал бы
         // не тем голосом, который выбрали.
         applyPendingVoice()
+        // Каким голосом заговорил этот синтезатор — в журнал, до первой
+        // фразы. Выбранный голос молча остаётся невыбранным, если движок его
+        // не знает, и по звуку это не отличить от «настройка не дошла»: обе
+        // поломки слышны одинаково — «говорят одним голосом, хотя в
+        // настройках разные». По этой записи видно, чей голос просили и чей
+        // вышел.
+        val spoken = currentVoiceName()
+        val mismatch = if (voiceName != null && spoken != voiceName) {
+            " (просили $voiceName — движок его не знает)"
+        } else {
+            ""
+        }
+        Journal.note(
+            "речь",
+            "$title: движок ${enginePackage ?: "системный"}, " +
+                "говорит голосом ${spoken ?: "по умолчанию"}$mismatch",
+        )
         onReady?.invoke()
         pending?.let { text ->
             pending = null
@@ -174,7 +205,7 @@ class Speaker(
         if (!ready || text.isBlank()) return
         // Свою фразу начинаем с тишины: скринридер, если он читает, умолкает.
         if (interrupt) interruptScreenReader()
-        Journal.note("речь", "приложение говорит: $text")
+        Journal.note("речь", "$title говорит: $text")
         val mode = if (interrupt) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         engine?.speak(text, mode, null, text)
     }
@@ -224,6 +255,9 @@ class Speaker(
      */
     fun previewVoice(name: String?, text: String, pitch: Float = 1f) {
         pendingVoice = name
+        // Пустое имя — это просьба «верни голос движка», а не «ничего не
+        // меняй»: пробуют и его тоже.
+        pendingDefault = name == null
         pendingPitch = pitch
         applyPendingVoice()
         sayWhenReady(text)
@@ -232,15 +266,26 @@ class Speaker(
     /**
      * Поставить голос и высоту, выбранные пробой. До подъёма движка ставить
      * некуда — тогда значения приедут в [onInit].
+     *
+     * Голос движка по умолчанию ставится здесь ровно тогда, когда о нём
+     * попросила проба. Без этой оговорки выбор голоса затирался бы: синтезатор
+     * поднимается, ставит выбранный голос ([onInit]) и следом — тем же
+     * методом — сбрасывал бы его на голос движка. За столом это звучало так,
+     * что все говорят одним голосом, а в настройках выбор работал: там голос
+     * звучит пробой (Катерина, 19.09: «в козле играет трое, у двух ботов
+     * одинаковый голос, в настройках установлены разные»).
      */
     private fun applyPendingVoice() {
         if (!ready) return
         val tts = engine ?: return
         runCatching {
-            val voice = if (pendingVoice == null) {
-                tts.defaultVoice
-            } else {
-                tts.voices?.firstOrNull { it.name == pendingVoice }
+            val voice = when {
+                pendingVoice != null -> tts.voices?.firstOrNull { it.name == pendingVoice }
+                pendingDefault -> tts.defaultVoice
+                // Ни пробы, ни просьбы о голосе движка не было: голос этому
+                // синтезатору уже выбран при подъёме движка, и подменять его
+                // здесь нечем.
+                else -> null
             }
             voice?.let { tts.voice = it }
             tts.setPitch(pendingPitch ?: pitch)

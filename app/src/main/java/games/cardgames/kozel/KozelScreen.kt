@@ -178,6 +178,9 @@ fun KozelScreen(
         Speaker(
             context = context,
             rate = settings.botRateKozel,
+            // Имя для журнала: за столом говорят три синтезатора, и запись
+            // без имени читается как одна речь.
+            title = "соперник",
             enginePackage = botEngine(settings.botEngineKozel, settings.engine),
             voiceName = botVoice(
                 settings.botVoiceKozel,
@@ -204,6 +207,7 @@ fun KozelScreen(
             Speaker(
                 context = context,
                 rate = settings.botRateKozelSecond,
+                title = "второй соперник",
                 enginePackage = botEngine(settings.botEngineKozelSecond, settings.engine),
                 voiceName = botVoice(
                     settings.botVoiceKozelSecond,
