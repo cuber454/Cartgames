@@ -41,8 +41,7 @@ import games.cardgames.GAME_DURAK
 import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.saveScore
-import games.cardgames.settings.BOT_PITCH_DURAK
-import games.cardgames.settings.botPitch
+import games.cardgames.settings.botEngine
 import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
@@ -120,12 +119,13 @@ fun DurakScreen(
             voiceName = settings.voice,
         )
     }
-    // Голос бота — своим синтезатором: высота у него своя, а её на живом
-    // движке на ходу не поменять. Своего голоса боту не выбрали — говорим
-    // голосом приложения, но ниже: за столом говорят двое, и спутать их
-    // значит не понять, чей ход.
+    // Голос бота — своим синтезатором: движок на живом синтезаторе на ходу не
+    // поменять. Своего голоса боту не выбрали — говорим голосом приложения:
+    // разводить соперника с ним положено синтезатором, а не высотой
+    // (Катерина, 19.09: «убери, чтобы повышение голоса было у каждого бота»).
     val botSpeaker = remember(
         settings.engine,
+        settings.botEngineDurak,
         settings.voice,
         settings.botVoiceDurak,
         settings.botRateDurak,
@@ -134,9 +134,13 @@ fun DurakScreen(
         Speaker(
             context = context,
             rate = settings.botRateDurak,
-            enginePackage = settings.engine,
-            voiceName = botVoice(settings.botVoiceDurak, settings.voice),
-            pitch = botPitch(settings.botVoiceDurak, BOT_PITCH_DURAK),
+            enginePackage = botEngine(settings.botEngineDurak, settings.engine),
+            voiceName = botVoice(
+                settings.botVoiceDurak,
+                settings.voice,
+                settings.botEngineDurak,
+                settings.engine,
+            ),
         )
     }
     val sounds = remember { TableSounds(context) }
