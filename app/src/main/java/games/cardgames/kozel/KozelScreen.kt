@@ -54,8 +54,8 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.TableVoice
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 import games.cardgames.speech.spokenVerdict
 import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandTile
@@ -195,20 +195,20 @@ fun KozelScreen(
     // сама, чтобы поместиться на экран (см. раскладку стола).
     val tableWidth: Dp = (TILE_WIDTH * TABLE_SCALE).dp
 
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
     // Вся речь за столом — через общий [TableVoice]: паузы, арбитраж с
     // скринридером и запись фразы для «Повтори» живут там, одни на все игры.
-    val appVoiceNow = rememberUpdatedState(appVoice)
+    val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
     val voice = remember(speaker, botSpeaker) {
         TableVoice(
             speaker = speaker,
             botSpeakers = mapOf(BOT to botSpeaker),
             view = view,
-            appVoice = { appVoiceNow.value },
+            speech = { speechNow.value },
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
@@ -428,7 +428,7 @@ fun KozelScreen(
             else -> sayEvent(
                 view = view,
                 speaker = speaker,
-                appVoice = appVoice,
+                speech = speech,
                 text = "Продолжаем. " + session.lastPhrase,
                 whenReady = true,
             )

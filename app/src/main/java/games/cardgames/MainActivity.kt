@@ -50,8 +50,8 @@ import games.cardgames.settings.SettingsScreen
 import games.cardgames.settings.loadSettings
 import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 import games.cardgames.update.Update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -261,10 +261,10 @@ private fun GamesScreen(
     val kozelPaused = kozel.restored ||
         (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
 
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
 
     LaunchedEffect(Unit) {
-        if (!appVoice) return@LaunchedEffect
+        if (!speech.speaks) return@LaunchedEffect
         val tail = buildString {
             if (paused) append(" Партия в дурака не доиграна, можно продолжить.")
             if (thousandPaused) append(" Партия в тысячу не доиграна, можно продолжить.")
@@ -412,8 +412,8 @@ private fun MenuScreen(
         (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
     val anyPaused = paused || thousandPaused || kozelPaused
 
-    // Кто говорит: приложение или скринридер. В каждый момент — ровно один.
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    // Кто говорит: приложение, скринридер или никто. В каждый момент — ровно один.
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
 
     // --- Обновление ------------------------------------------------------
     //
@@ -429,7 +429,7 @@ private fun MenuScreen(
 
     // Фраза об обновлении идёт тем же путём, что и всё остальное на экране:
     // при скринридере её читает он, а не второй голос поверх его чтения.
-    fun announce(text: String) = sayEvent(view, speaker, appVoice, text)
+    fun announce(text: String) = sayEvent(view, speaker, speech, text)
 
     // Экран открылся или нет — сказать надо в обоих случаях. Молчание про
     // сбой игрок читает как «нажал, и ничего»: искать причину ему негде.
@@ -525,7 +525,7 @@ private fun MenuScreen(
     // прочитает и название, и счёт, и кнопки. Наша фраза поверх его чтения
     // была бы ровно той кашей, от которой мы уходим.
     LaunchedEffect(Unit) {
-        if (!appVoice) return@LaunchedEffect
+        if (!speech.speaks) return@LaunchedEffect
         val tail = if (anyPaused) " Партия не доиграна, можно продолжить." else ""
         speaker.say("Карточные игры. Выбери раздел. ${score.spoken()}$tail")
     }

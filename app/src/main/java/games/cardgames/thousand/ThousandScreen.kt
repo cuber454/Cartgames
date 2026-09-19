@@ -49,13 +49,13 @@ import games.cardgames.sound.Vibrations
 import games.cardgames.speech.FIRST_BOT_SEAT
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.TableVoice
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableVoice
 import games.cardgames.speech.cardVerdict
-import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 import games.cardgames.speech.speechMs
+import games.cardgames.speech.verdictOf
 import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.CardStack
@@ -209,15 +209,15 @@ fun ThousandScreen(
     val tableHeight: Dp = (CARD_HEIGHT * 0.55f).dp
     val columns = if (settings.largeText) 2 else 3
 
-    // Кто говорит за столом: приложение или скринридер. В каждый момент —
-    // ровно один, иначе две речи накладываются и выходит каша.
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    // Кто говорит за столом: приложение, скринридер или никто. В каждый
+    // момент — ровно один, иначе две речи накладываются и выходит каша.
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
     // Вся речь за столом — через общий [TableVoice]: паузы, арбитраж со
     // скринридером и запись фразы для «Повтори» живут там, одни на обе игры.
-    val appVoiceNow = rememberUpdatedState(appVoice)
+    val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
     val voice = remember(speaker, botSpeaker, botSpeakerSecond) {
         TableVoice(
@@ -227,7 +227,7 @@ fun ThousandScreen(
                 botSpeakerSecond?.let { put(SECOND_BOT, it) }
             },
             view = view,
-            appVoice = { appVoiceNow.value },
+            speech = { speechNow.value },
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
@@ -664,7 +664,7 @@ fun ThousandScreen(
             else -> sayEvent(
                 view = view,
                 speaker = speaker,
-                appVoice = appVoice,
+                speech = speech,
                 text = "Продолжаем. " + session.lastPhrase,
                 whenReady = true,
             )

@@ -42,7 +42,7 @@ const val PHRASE_GAP_MS = 60L
  * живёт в `remember`, то есть переживает перерисовку, — значит, меняющиеся
  * значения он обязан спрашивать сам.
  *
- * @param appVoice говорит ли приложение прямо сейчас.
+ * @param speech кто говорит прямо сейчас: приложение, скринридер или никто.
  * @param rate скорость речи — по ней считается длина паузы.
  * @param minWaitMs сколько ждать минимум, чтобы бот не тараторил.
  * @param remember куда записать фразу до того, как она прозвучит: её должна
@@ -64,7 +64,7 @@ class TableVoice(
      */
     private val botSpeakers: Map<Int, Speaker> = emptyMap(),
     private val view: View?,
-    private val appVoice: () -> Boolean,
+    private val speech: () -> Speech,
     private val rate: () -> Float,
     private val scope: CoroutineScope,
     private val minWaitMs: Long,
@@ -86,12 +86,12 @@ class TableVoice(
     fun say(text: String, whenReady: Boolean = false, afterMs: Long = 0L) {
         note(text, afterMs)
         if (afterMs <= 0) {
-            sayEvent(view, speaker, appVoice(), text, whenReady)
+            sayEvent(view, speaker, speech(), text, whenReady)
             return
         }
         scope.launch {
             delay(afterMs)
-            sayEvent(view, speaker, appVoice(), text, whenReady)
+            sayEvent(view, speaker, speech(), text, whenReady)
         }
     }
 
@@ -110,12 +110,12 @@ class TableVoice(
         val voice = botSpeakers[seat] ?: speaker
         note(text, afterMs, voice = voice)
         if (afterMs <= 0) {
-            sayEvent(view, voice, appVoice(), text, whenReady)
+            sayEvent(view, voice, speech(), text, whenReady)
             return
         }
         scope.launch {
             delay(afterMs)
-            sayEvent(view, voice, appVoice(), text, whenReady)
+            sayEvent(view, voice, speech(), text, whenReady)
         }
     }
 
@@ -137,7 +137,11 @@ class TableVoice(
             say(text, afterMs = afterMs)
             return
         }
-        if (!appVoice()) {
+        // «Никто» — не то же, что скринридер: там фраза хоть куда-то уходит,
+        // а тут её не говорит никто, и в «Повтори» она тоже промолчит.
+        val now = speech()
+        if (now == Speech.NONE) return
+        if (now == Speech.READER) {
             Journal.note("речь", "сказано только в «Повтори» (говорит скринридер): $text")
             return
         }
@@ -166,9 +170,9 @@ class TableVoice(
      */
     fun sayRequested(text: String) {
         note(text, repeatable = false)
-        val aloud = appVoice()
-        if (aloud) Journal.note("речь", "игрок спросил — отвечает приложение: $text")
-        sayEvent(view, speaker, aloud, text)
+        val now = speech()
+        if (now.speaks) Journal.note("речь", "игрок спросил — отвечает приложение: $text")
+        sayEvent(view, speaker, now, text)
     }
 
     /** Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]. */
@@ -183,7 +187,7 @@ class TableVoice(
      * нём, а не речью. У скринридера голос один на всех, и реплика без имени
      * не говорит, чья она, — там имя и остаётся (Катерина, 19.09).
      */
-    fun appSpeaks(): Boolean = appVoice()
+    fun appSpeaks(): Boolean = speech().speaks
 
     /**
      * [voice] — чья это будет фраза: по скорости её синтезатора считается,

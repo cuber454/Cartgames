@@ -30,8 +30,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import games.cardgames.settings.loadSettings
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 
 /**
  * Справка по правилам — построчно.
@@ -66,7 +66,7 @@ fun RulesScreen(
     }
     DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
 
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
 
     // Строки справки: заголовки разделов и правила, все — плоским списком.
@@ -95,13 +95,13 @@ fun RulesScreen(
         val line = lineAt(index) ?: return
         cursor = index
         val text = if (line.isHeader) "Раздел. ${line.text}" else "Правило ${line.number}. ${line.text}"
-        sayEvent(view, speaker, appVoice, text)
+        sayEvent(view, speaker, speech, text)
     }
 
     // Первая строка — приветствие и подсказка, как листать. Без неё экран
     // открывается в тишину, и непонятно, есть ли тут что-то вообще.
     LaunchedEffect(Unit) {
-        if (!appVoice) return@LaunchedEffect
+        if (!speech.speaks) return@LaunchedEffect
         speaker.sayWhenReady(
             "Правила «$title». Всего пунктов: ${lines.count { !it.isHeader }}. " +
                 "Кнопка «Дальше» читает следующий пункт.",
@@ -159,7 +159,7 @@ fun RulesScreen(
             Button(
                 onClick = {
                     val next = cursor + 1
-                    if (next < lines.size) say(next) else sayEvent(view, speaker, appVoice, "Это конец справки.")
+                    if (next < lines.size) say(next) else sayEvent(view, speaker, speech, "Это конец справки.")
                 },
                 modifier = Modifier.weight(1f),
             ) { Text("Дальше") }

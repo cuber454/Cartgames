@@ -53,8 +53,8 @@ import games.cardgames.score.Score
 import games.cardgames.thousand.AUTO_PRAISE
 import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 import games.cardgames.update.Update
 import games.engine.durak.Difficulty
 import kotlinx.coroutines.Dispatchers
@@ -237,8 +237,8 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
     // Кто говорит прямо сейчас — то же правило, что и за столом: в каждый
     // момент ровно один. Нужно и здесь, в настройках: иначе переключение
-    // настроек озвучивают оба голоса сразу.
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    // настроек озвучивают оба голоса сразу. «Никто» молчит и здесь.
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
 
     // Список голосов открыт для одного из троих. null — закрыт.
@@ -270,8 +270,8 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * ним — для этого есть режим «Кто говорит: приложение».
      */
     fun auditionVoice(voice: String?, pitch: Float, text: String, rate: Float = settings.rate) {
-        if (!appVoice) {
-            sayEvent(view, speaker, appVoice, text)
+        if (!speech.speaks) {
+            sayEvent(view, speaker, speech, text)
             return
         }
         var probe = audition
@@ -308,7 +308,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * выбранный порядок карт произносили оба разом.
      */
     fun announce(text: String) {
-        sayEvent(view, speaker, appVoice, text)
+        sayEvent(view, speaker, speech, text)
     }
 
     /**
@@ -464,7 +464,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         rateDraft = next
         speaker.setRate(next)
         if (next != settings.rate) save(settings.copy(rate = next))
-        sayEvent(view, speaker, appVoice, SAMPLE, whenReady = true)
+        sayEvent(view, speaker, speech, SAMPLE, whenReady = true)
     }
 
     val activeEngine: TextToSpeech.EngineInfo? = engines.firstOrNull { it.name == settings.engine }
@@ -987,6 +987,8 @@ private fun whoSpeaksPhrase(mode: VoiceMode): String = when (mode) {
     VoiceMode.AUTO -> "Авто: работает скринридер — говорит он, выключен — говорит приложение."
     VoiceMode.ALWAYS -> "Говорит приложение, скринридеру велено умолкать."
     VoiceMode.NEVER -> "Говорит скринридер, приложение отдаёт свои фразы ему."
+    VoiceMode.SILENT ->
+        "Игра молчит: ни приложение, ни скринридер не говорят. Звуки стола и вибрация остаются — их выключают отдельно."
 }
 
 @Composable
