@@ -78,9 +78,15 @@ jobs:
   # Релиз: подписанная сборка уезжает в GitHub Release вместе с update.txt.
   # По этому файлу приложение понимает, что вышла новая версия, и тянет APK.
   # Номер сборки — номер прогона CI, он только растёт.
+  #
+  # Условие — именно push в main, и это не придирка: «не pull request» пропускало
+  # сюда и ручной прогон (workflow_dispatch), а его можно запустить на любой
+  # ветке. 19.09 так и вышло: прогон на ветке речи выпустил сборку 0.9.98 в свет
+  # и переписал update.txt у всех, кому её видно. Отдавать наружу можно только то,
+  # что лежит в main.
   release:
     name: Релиз
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: test
     steps:
