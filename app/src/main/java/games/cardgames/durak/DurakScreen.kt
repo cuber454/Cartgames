@@ -432,7 +432,7 @@ fun DurakScreen(
         // ход защищающегося. По «attacker == PLAYER» строка врала ровно в
         // этот момент — обещала ход там, где игрок ничего сделать не мог.
         append(if (moves.isNotEmpty()) "Твой ход." else "Ход соперника.")
-        append(" Козырь — ${game.trumpSuit.spoken}.")
+        append(" Козырь — ${game.trumpSuit.title}.")
         append(" В колоде ${game.deckSize()}.")
         append(" У соперника ${game.handOf(BOT).size}.")
     }
@@ -710,7 +710,7 @@ private fun dealPhrase(game: DurakGame): String {
     // длинную ленту, которую он всё равно не удержит; порядок он выбрал
     // сам в настройках. Стол при раздаче пуст — о нём молчим.
     val turn = if (game.legalMoves(PLAYER).isNotEmpty()) "Твой ход." else "Ход соперника."
-    return "Раздача. Козырь — ${game.trumpSuit.spoken}. $turn"
+    return "Раздача. Козырь — ${game.trumpSuit.title}. $turn"
 }
 
 /**
@@ -723,7 +723,7 @@ private fun resumePhrase(game: DurakGame): String {
     // Стол пуст — о нём молчим: «на столе пусто» это не сведение, а шум.
     val table = if (game.table.isEmpty()) "" else " На столе: ${game.spokenTable()}."
     return "Продолжаем партию. Карт у тебя: ${game.handOf(PLAYER).size}, " +
-        "в колоде: ${game.deckSize()}, козырь — ${game.trumpSuit.spoken}.$table $turn"
+        "в колоде: ${game.deckSize()}, козырь — ${game.trumpSuit.title}.$table $turn"
 }
 
 /**
