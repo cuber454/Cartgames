@@ -149,6 +149,38 @@ fun seatsPhrase(seats: Int): String =
 /** Высота голоса бота: своя только у бота без собственного голоса. */
 fun botPitch(own: String?, fallback: Float): Float = if (own == null) fallback else 1f
 
+/**
+ * Ступени скорости речи соперника: короткий шаг вокруг обычной.
+ *
+ * Скорость — вторая примета, по которой бота узнают, когда голос у него тот
+ * же, что у приложения: высота их уже разводит, но «выше» и «ниже» на слух
+ * путаются, а быстрый говор и медленный — нет. Ступеней намеренно мало:
+ * скорость — это разборчивость, и на предельных её значениях речь бота
+ * перестаёт быть речью. Перебирают их одной кнопкой, а не ползунком
+ * (Катерина, 19.09: «вместе с синтезатором для каждого бота надо сделать
+ * регулировку скорости»).
+ */
+val BOT_RATES: List<Float> = listOf(0.75f, 0.9f, 1.0f, 1.15f, 1.4f)
+
+/**
+ * Скорость соперника словами. 1.0 — не «обычно», а «как приложение»:
+ * обычная скорость у них общая, и слово на этом месте ничего не говорит.
+ */
+fun botRateTitle(value: Float): String =
+    if (value == 1f) "как приложение" else rateTitle(value)
+
+/**
+ * Следующая ступень скорости соперника — по кругу.
+ *
+ * Ближайшая ступень, а не точное совпадение: скорость приходит из хранилища,
+ * куда её мог положить кто угодно, и кнопка, которая на чужом числе просто
+ * молчит, — хуже, чем кнопка, которая с него начинает.
+ */
+fun nextBotRate(value: Float): Float {
+    val at = BOT_RATES.indices.minByOrNull { kotlin.math.abs(BOT_RATES[it] - value) } ?: 0
+    return BOT_RATES[(at + 1) % BOT_RATES.size]
+}
+
 /** Скорость словами: «1.35» человеку ни о чём не говорит, «быстро» — говорит. */
 fun rateTitle(value: Float): String = when {
     value < 0.8f -> "очень медленно"
@@ -196,6 +228,23 @@ data class Settings(
      */
     val botVoiceThousandSecond: String? = null,
     val botVoiceKozel: String? = null,
+    /**
+     * Скорость речи соперника — своя у каждой игры, как и голос. 1.0 — как
+     * говорит приложение.
+     *
+     * Своя у игры, а не одна на всех: голоса у ботов разные, и одна скорость
+     * на четверых заставляла бы подгонять всех под того, кого слушаешь чаще.
+     * Ступени — [BOT_RATES].
+     */
+    val botRateDurak: Float = 1.0f,
+    val botRateThousand: Float = 1.0f,
+    /**
+     * Скорость второго соперника в «Тысяче» — третья примета вдобавок к
+     * голосу и высоте: за столом на троих говорят трое, и различать их надо
+     * всех (Катерина, 19.09).
+     */
+    val botRateThousandSecond: Float = 1.0f,
+    val botRateKozel: Float = 1.0f,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     /**
@@ -310,6 +359,10 @@ private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_BOT_VOICE_THOUSAND_SECOND = "bot_voice_thousand_second"
 private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
+private const val KEY_BOT_RATE_DURAK = "bot_rate_durak"
+private const val KEY_BOT_RATE_THOUSAND = "bot_rate_thousand"
+private const val KEY_BOT_RATE_THOUSAND_SECOND = "bot_rate_thousand_second"
+private const val KEY_BOT_RATE_KOZEL = "bot_rate_kozel"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
 private const val KEY_BOT_NAME = "bot_name"
@@ -348,6 +401,10 @@ fun loadSettings(context: Context): Settings {
         botVoiceThousand = prefs.getString(KEY_BOT_VOICE_THOUSAND, null),
         botVoiceThousandSecond = prefs.getString(KEY_BOT_VOICE_THOUSAND_SECOND, null),
         botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
+        botRateDurak = readBotRate(prefs, KEY_BOT_RATE_DURAK),
+        botRateThousand = readBotRate(prefs, KEY_BOT_RATE_THOUSAND),
+        botRateThousandSecond = readBotRate(prefs, KEY_BOT_RATE_THOUSAND_SECOND),
+        botRateKozel = readBotRate(prefs, KEY_BOT_RATE_KOZEL),
         voiceMode = prefs.getString(KEY_VOICE_MODE, null)
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
@@ -391,6 +448,13 @@ private fun readRate(prefs: SharedPreferences): Float =
  * до того, как появился выбор: партия, начатая до обновления, продолжается
  * за тем же столом, за каким шла.
  */
+/**
+ * Скорость речи соперника из хранилища. Ключа нет — обычная: бот, которого
+ * не настраивали, говорит как приложение, и это то, к чему игрок привык.
+ */
+private fun readBotRate(prefs: SharedPreferences, key: String): Float =
+    (prefs.all[key] as? Float)?.coerceIn(RATE_MIN, RATE_MAX) ?: 1.0f
+
 private fun readSeats(prefs: SharedPreferences): Int =
     (prefs.all[KEY_THOUSAND_SEATS] as? Int)?.coerceIn(2, 3) ?: 2
 
@@ -414,6 +478,10 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
         .putString(KEY_BOT_VOICE_THOUSAND_SECOND, settings.botVoiceThousandSecond)
         .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
+        .putFloat(KEY_BOT_RATE_DURAK, settings.botRateDurak)
+        .putFloat(KEY_BOT_RATE_THOUSAND, settings.botRateThousand)
+        .putFloat(KEY_BOT_RATE_THOUSAND_SECOND, settings.botRateThousandSecond)
+        .putFloat(KEY_BOT_RATE_KOZEL, settings.botRateKozel)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
         .putString(KEY_BOT_NAME, settings.botName)

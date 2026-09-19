@@ -127,11 +127,12 @@ fun DurakScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceDurak,
+        settings.botRateDurak,
         settings.rate,
     ) {
         Speaker(
             context = context,
-            rate = settings.rate,
+            rate = settings.botRateDurak,
             enginePackage = settings.engine,
             voiceName = botVoice(settings.botVoiceDurak, settings.voice),
             pitch = botPitch(settings.botVoiceDurak, BOT_PITCH_DURAK),

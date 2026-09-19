@@ -160,6 +160,13 @@ class Speaker(
         if (ready) runCatching { engine?.setSpeechRate(value) }
     }
 
+    /**
+     * Текущая скорость речи. По ней считают, сколько фраза будет звучать:
+     * у бота скорость своя (SETTINGS.md, 8), и паузу после его реплики
+     * мерить скоростью приложения значило бы обрывать её на полуслове.
+     */
+    val rate: Float get() = speechRate
+
     /** Сказать фразу. [interrupt] — перебить то, что говорится сейчас. */
     fun say(text: String, interrupt: Boolean = true) {
         if (!ready || text.isBlank()) return

@@ -71,12 +71,56 @@ private const val SAMPLE = "Так будет звучать игра. Козы�
  * своего не выбрали: высота у ботов сдвинута, и «как у приложения» без
  * «выше» или «ниже» обещает ровный голос, которого за столом не будет.
  */
-private enum class VoiceSlot(val title: String, val inherit: String) {
-    APP("Голос приложения", "системный"),
-    DURAK("Голос соперника в дураке", "как у приложения, ниже"),
-    THOUSAND("Голос соперника в тысяче", "как у приложения, выше"),
-    THOUSAND_SECOND("Голос второго соперника в тысяче", "как у приложения, ниже"),
-    KOZEL("Голос соперника в козле", "как у приложения, ещё выше"),
+private enum class VoiceSlot(val title: String, val rateLabel: String, val inherit: String) {
+    APP("Голос приложения", "Скорость речи приложения", "системный"),
+    DURAK("Голос соперника в дураке", "Скорость речи соперника в дураке", "как у приложения, ниже"),
+    THOUSAND("Голос соперника в тысяче", "Скорость речи соперника в тысяче", "как у приложения, выше"),
+    THOUSAND_SECOND(
+        "Голос второго соперника в тысяче",
+        "Скорость речи второго соперника в тысяче",
+        "как у приложения, ниже",
+    ),
+    KOZEL("Голос соперника в козле", "Скорость речи соперника в козле", "как у приложения, ещё выше"),
+}
+
+/**
+ * Голос и высота того, чью строку настроек правят: у приложения — его
+ * собственные, у соперника — его голос и его сдвиг высоты.
+ *
+ * Пара, а не два вызова, потому что берут их всегда вместе: голос без высоты
+ * прозвучит не тем, чем говорит за столом.
+ */
+private fun slotVoice(settings: Settings, slot: VoiceSlot): Pair<String?, Float> = when (slot) {
+    VoiceSlot.APP -> settings.voice to 1f
+    VoiceSlot.DURAK -> botVoice(settings.botVoiceDurak, settings.voice) to
+        botPitch(settings.botVoiceDurak, BOT_PITCH_DURAK)
+
+    VoiceSlot.THOUSAND -> botVoice(settings.botVoiceThousand, settings.voice) to
+        botPitch(settings.botVoiceThousand, BOT_PITCH_THOUSAND)
+
+    VoiceSlot.THOUSAND_SECOND -> botVoice(settings.botVoiceThousandSecond, settings.voice) to
+        botPitch(settings.botVoiceThousandSecond, BOT_PITCH_THOUSAND_SECOND)
+
+    VoiceSlot.KOZEL -> botVoice(settings.botVoiceKozel, settings.voice) to
+        botPitch(settings.botVoiceKozel, BOT_PITCH_KOZEL)
+}
+
+/** Скорость речи того, чью строку настроек правят. */
+private fun slotRate(settings: Settings, slot: VoiceSlot): Float = when (slot) {
+    VoiceSlot.APP -> settings.rate
+    VoiceSlot.DURAK -> settings.botRateDurak
+    VoiceSlot.THOUSAND -> settings.botRateThousand
+    VoiceSlot.THOUSAND_SECOND -> settings.botRateThousandSecond
+    VoiceSlot.KOZEL -> settings.botRateKozel
+}
+
+/** Те же настройки, но со сменённой скоростью у того, чья это строка. */
+private fun withRate(settings: Settings, slot: VoiceSlot, rate: Float): Settings = when (slot) {
+    VoiceSlot.APP -> settings.copy(rate = rate)
+    VoiceSlot.DURAK -> settings.copy(botRateDurak = rate)
+    VoiceSlot.THOUSAND -> settings.copy(botRateThousand = rate)
+    VoiceSlot.THOUSAND_SECOND -> settings.copy(botRateThousandSecond = rate)
+    VoiceSlot.KOZEL -> settings.copy(botRateKozel = rate)
 }
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
@@ -191,7 +235,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * этот момент не слышно, и подбирать голос на слух всё равно придётся с
      * ним — для этого есть режим «Кто говорит: приложение».
      */
-    fun auditionVoice(voice: String?, pitch: Float, text: String) {
+    fun auditionVoice(voice: String?, pitch: Float, text: String, rate: Float = settings.rate) {
         if (!appVoice) {
             sayEvent(view, speaker, appVoice, text)
             return
@@ -199,9 +243,13 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         var probe = audition
         // Синтезатор сменили — прежняя проба говорила чужим движком.
         if (probe == null || auditionEngine != settings.engine) {
-            probe = Speaker(context, rate = settings.rate, enginePackage = settings.engine)
+            probe = Speaker(context, rate = rate, enginePackage = settings.engine)
             audition = probe
             auditionEngine = settings.engine
+        } else {
+            // Скорость ставим на живом движке: у пробы своя скорость на
+            // каждый образец, и прежняя к новому не относится.
+            probe.setRate(rate)
         }
         probe.previewVoice(voice, text, pitch)
     }
@@ -312,6 +360,32 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 botVoice(name, settings.voice),
                 botPitch(name, BOT_PITCH_KOZEL),
                 sampleFor(index, voices.size, if (name == null) "ещё выше" else null),
+            )
+        }
+    }
+
+    /**
+     * Строка скорости речи того, кто за столом говорит.
+     *
+     * Скорость выбирают на слух, как и голос, поэтому образец звучит его
+     * голосом и с его скоростью: «1.4» человеку ни о чём не говорит, а
+     * услышать её надо там же, где она будет звучать, — за столом.
+     *
+     * Кнопкой по кругу, а не ползунком: ступеней мало ([BOT_RATES]), и
+     * скорость тут — примета, по которой бота узнают, а не разборчивость,
+     * которую подгоняют под себя.
+     */
+    fun rateRow(slot: VoiceSlot) {
+        val value = slotRate(settings, slot)
+        SettingButton("${slot.rateLabel}: ${botRateTitle(value)}") {
+            val next = nextBotRate(value)
+            save(withRate(settings, slot, next))
+            val (voice, pitch) = slotVoice(settings, slot)
+            auditionVoice(
+                voice,
+                pitch,
+                "${slot.rateLabel}: ${botRateTitle(next)}. $SAMPLE",
+                rate = next,
             )
         }
     }
@@ -515,7 +589,9 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             // Голос у каждого из четверых свой: за столом говорят приложение и
             // три бота, и на слух их надо различать — «бот сказал» и
             // «приложение сказало» это разные вещи, спутать их значит не
-            // понять, чей ход.
+            // понять, чей ход. Строка скорости стоит сразу под голосом: это
+            // вторая примета того же бота, и искать её в другом месте списка
+            // значит не найти (Катерина, 19.09).
             SettingButton(voiceRowTitle(VoiceSlot.APP, settings.voice, voices)) {
                 if (voices.isEmpty()) {
                     announce("Синтезатор ещё не готов, попробуй ещё раз.")
@@ -531,6 +607,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                     picking = VoiceSlot.DURAK
                 }
             }
+            rateRow(VoiceSlot.DURAK)
 
             SettingButton(voiceRowTitle(VoiceSlot.THOUSAND, settings.botVoiceThousand, voices)) {
                 if (voices.isEmpty()) {
@@ -539,6 +616,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                     picking = VoiceSlot.THOUSAND
                 }
             }
+            rateRow(VoiceSlot.THOUSAND)
 
             // Голос второго соперника показываем только за столом на троих:
             // на двоих второго бота нет, и строка была бы строкой ни о чём.
@@ -552,6 +630,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                         picking = VoiceSlot.THOUSAND_SECOND
                     }
                 }
+                rateRow(VoiceSlot.THOUSAND_SECOND)
             }
 
             SettingButton(voiceRowTitle(VoiceSlot.KOZEL, settings.botVoiceKozel, voices)) {
@@ -561,6 +640,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                     picking = VoiceSlot.KOZEL
                 }
             }
+            rateRow(VoiceSlot.KOZEL)
 
             SettingButton("Кто говорит: ${settings.voiceMode.title}") {
                 val next = settings.voiceMode.next()
@@ -582,11 +662,11 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             // («Меркурий берёт прикуп», «Взятку берёт Меркурий»), а падежные
             // фразы говорят «соперник» (SETTINGS.md, 8).
             //
-            // За столом на двоих этих фраз меньше: там бот ведёт свою речь
-            // от первого лица и себя не называет («Называю 120» вместо
-            // «Меркурий называет 120») — имя звучит только в том, что о нём
-            // говорит приложение. Строка от этого не лишняя: счёт, взятки и
-            // исход кона зовут его по имени всё равно (Катерина, 19.09).
+            // Бот себя по имени не называет: свою речь он ведёт от первого
+            // лица («Называю 120» вместо «Меркурий называет 120») — имя
+            // возвращается только там, где фразу читает скринридер. Строка от
+            // этого не лишняя: счёт, взятки и исход кона зовут его по имени
+            // всё равно (Катерина, 19.09).
             Text("Имя соперника", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(4.dp))
             OutlinedTextField(

@@ -107,8 +107,8 @@ class TableVoice(
      * приложения: за столом, где бот один, второе место и не спрашивается.
      */
     fun sayBot(text: String, seat: Int = FIRST_BOT_SEAT, whenReady: Boolean = false, afterMs: Long = 0L) {
-        note(text, afterMs)
         val voice = botSpeakers[seat] ?: speaker
+        note(text, afterMs, voice = voice)
         if (afterMs <= 0) {
             sayEvent(view, voice, appVoice(), text, whenReady)
             return
@@ -174,8 +174,29 @@ class TableVoice(
     /** Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]. */
     fun waitMs(): Long = (endsAt - System.currentTimeMillis()).coerceAtLeast(minWaitMs)
 
-    private fun note(text: String, afterMs: Long = 0L, repeatable: Boolean = true) {
+    /**
+     * Говорит ли сейчас приложение своим синтезатором.
+     *
+     * Спрашивают, чтобы решить, называть ли бота по имени. У синтезатора
+     * приложения голоса разведены — по голосу, высоте и скорости, — и бот
+     * говорит о себе «я»: имя в его собственной речи звучало бы справкой о
+     * нём, а не речью. У скринридера голос один на всех, и реплика без имени
+     * не говорит, чья она, — там имя и остаётся (Катерина, 19.09).
+     */
+    fun appSpeaks(): Boolean = appVoice()
+
+    /**
+     * [voice] — чья это будет фраза: по скорости её синтезатора считается,
+     * сколько она прозвучит. У бота скорость своя, и мерить её скоростью
+     * приложения значит решить, что фраза кончилась, когда она ещё идёт.
+     */
+    private fun note(
+        text: String,
+        afterMs: Long = 0L,
+        repeatable: Boolean = true,
+        voice: Speaker = speaker,
+    ) {
         if (repeatable) remember(text)
-        endsAt = System.currentTimeMillis() + afterMs + speechMs(text, rate())
+        endsAt = System.currentTimeMillis() + afterMs + speechMs(text, voice.rate)
     }
 }

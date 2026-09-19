@@ -157,11 +157,12 @@ fun KozelScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceKozel,
+        settings.botRateKozel,
         settings.rate,
     ) {
         Speaker(
             context = context,
-            rate = settings.rate,
+            rate = settings.botRateKozel,
             enginePackage = settings.engine,
             voiceName = botVoice(settings.botVoiceKozel, settings.voice),
             pitch = botPitch(settings.botVoiceKozel, BOT_PITCH_KOZEL),
