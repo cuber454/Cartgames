@@ -43,8 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_KOZEL
-import games.cardgames.settings.BOT_PITCH_KOZEL
-import games.cardgames.settings.botPitch
+import games.cardgames.settings.botEngine
 import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
@@ -150,12 +149,14 @@ fun KozelScreen(
             voiceName = settings.voice,
         )
     }
-    // Голос соперника — своим синтезатором: высота у него своя, а её на живом
-    // движке на ходу не поменять. Своего голоса боту не выбрали — говорим
-    // голосом приложения, но выше: за столом говорят двое, и спутать их
-    // значит не понять, чей ход.
+    // Голос соперника — своим синтезатором: движок на живом синтезаторе на
+    // ходу не поменять. Своего голоса боту не выбрали — говорим голосом
+    // приложения: разводить соперника с ним положено синтезатором, а не
+    // высотой (Катерина, 19.09: «убери, чтобы повышение голоса было у каждого
+    // бота»).
     val botSpeaker = remember(
         settings.engine,
+        settings.botEngineKozel,
         settings.voice,
         settings.botVoiceKozel,
         settings.botRateKozel,
@@ -164,9 +165,13 @@ fun KozelScreen(
         Speaker(
             context = context,
             rate = settings.botRateKozel,
-            enginePackage = settings.engine,
-            voiceName = botVoice(settings.botVoiceKozel, settings.voice),
-            pitch = botPitch(settings.botVoiceKozel, BOT_PITCH_KOZEL),
+            enginePackage = botEngine(settings.botEngineKozel, settings.engine),
+            voiceName = botVoice(
+                settings.botVoiceKozel,
+                settings.voice,
+                settings.botEngineKozel,
+                settings.engine,
+            ),
         )
     }
     val sounds = remember { TableSounds(context) }

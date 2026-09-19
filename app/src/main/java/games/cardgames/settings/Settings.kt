@@ -59,31 +59,48 @@ val RATE_STEPS: Int = ((RATE_MAX - RATE_MIN) / RATE_STEP).roundToInt() - 1
 private val LEGACY_RATES = mapOf("SLOW" to 0.75f, "NORMAL" to 1.0f, "FAST" to 1.35f)
 
 /**
- * Высота голоса бота, если своего голоса ему не выбрали.
+ * Голос бота: свой, а не выбрали — голос приложения.
  *
- * За столом говорят вчетвером: приложение, бот в дураке, бот в тысяче и бот
- * в «Козле». Голосов в телефоне у игрока бывает и один, а различать их надо
- * всех: «бот сказал» и «приложение сказало» — разные вещи, и спутать их
- * значит не понять, чей ход. Поэтому бот без своего голоса говорит голосом
- * приложения, сдвинутым по высоте: в дураке ниже, в тысяче выше, в «Козле»
- * ещё выше. Сдвиг небольшой — голос должен остаться разборчивым, а на слух
- * и четверти тона хватает.
- */
-const val BOT_PITCH_DURAK = 0.85f
-const val BOT_PITCH_THOUSAND = 1.2f
-/**
- * Высота второго соперника в «Тысяче» — ниже приложения.
+ * Голос приложения подставляется только тому боту, который говорит его же
+ * синтезатором. Имя голоса живёт внутри движка: в чужом оно значит не «тот
+ * голос, что у приложения», а «первый подходящий», и обещание «как у
+ * приложения» оказалось бы ложью (Катерина, 19.09: «меня всё равно
+ * разговаривает всё одним голосом, нет разделения»).
  *
- * За столом на троих один голос выше, другой ниже: два бота в одной
- * тональности звучали бы как один, и кто назвал сумму, не различить
- * (Катерина, 19.09). Своего голоса второму не выбрали — говорим голосом
- * приложения, сдвинутым вниз.
+ * [ownEngine] — синтезатор, выбранный боту в настройках игры, [appEngine] —
+ * синтезатор приложения. Каким бот заговорит на самом деле, решает
+ * [botEngine] — она и зовётся здесь.
  */
-const val BOT_PITCH_THOUSAND_SECOND = 0.85f
-const val BOT_PITCH_KOZEL = 1.4f
+fun botVoice(
+    own: String?,
+    appVoice: String?,
+    ownEngine: String? = null,
+    appEngine: String? = null,
+): String? = when {
+    own != null -> own
+    // Движки сравниваются приведённые, а не записанные как есть: «системный»
+    // у бота и «системный» у приложения — это один и тот же движок, хотя
+    // записаны они по-разному (пустой строкой и пустым значением).
+    botEngine(ownEngine, appEngine) == appEngine -> appVoice
+    else -> null
+}
 
-/** Голос бота: свой, а не выбрали — голос приложения. */
-fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
+/**
+ * Синтезатор бота: свой, а не выбрали — синтезатор приложения.
+ *
+ * Выбрать боту другой синтезатор — самый надёжный способ развести голоса:
+ * голосов у движка бывает и один, а движков в телефоне обычно несколько, и
+ * два разных движка не спутать никакой высотой (Катерина, 19.09: «чтобы в
+ * голосе каждого бота можно было выбирать и движок, и голос»).
+ *
+ * Пустая строка — «системный»: это не то же, что «как у приложения», когда
+ * у приложения выбран свой движок.
+ */
+fun botEngine(own: String?, appEngine: String?): String? = when {
+    own == null -> appEngine
+    own.isEmpty() -> null
+    else -> own
+}
 
 /**
  * Имя соперника этой игры. Пусто — имени нет, и за столом его зовут «Бот».
@@ -177,15 +194,12 @@ fun seatsPhrase(seats: Int): String =
         "За столом двое: соперник один, по десять карт и два прикупа по две. Со следующей партии."
     }
 
-/** Высота голоса бота: своя только у бота без собственного голоса. */
-fun botPitch(own: String?, fallback: Float): Float = if (own == null) fallback else 1f
-
 /**
  * Ступени скорости речи соперника: короткий шаг вокруг обычной.
  *
- * Скорость — вторая примета, по которой бота узнают, когда голос у него тот
- * же, что у приложения: высота их уже разводит, но «выше» и «ниже» на слух
- * путаются, а быстрый говор и медленный — нет. Ступеней намеренно мало:
+ * Скорость — ещё одна примета, по которой бота узнают: голос и синтезатор
+ * разводят его с приложением, но два бота за одним столом могут говорить
+ * похоже, а быстрый говор и медленный не спутать. Ступеней намеренно мало:
  * скорость — это разборчивость, и на предельных её значениях речь бота
  * перестаёт быть речью. Перебирают их одной кнопкой, а не ползунком
  * (Катерина, 19.09: «вместе с синтезатором для каждого бота надо сделать
@@ -241,8 +255,8 @@ data class Settings(
     /** Имя голоса внутри синтезатора. null — голос по умолчанию. */
     val voice: String? = null,
     /**
-     * Голос бота — свой у каждой игры. null — «как у приложения», и тогда
-     * бот отличается от него высотой (см. [BOT_PITCH_DURAK]).
+     * Голос бота — свой у каждой игры. null — «как у приложения»: бот говорит
+     * и голосом приложения тоже, а разводит их синтезатор (см. [botEngine]).
      *
      * Игра — не украшение: за столом говорят трое, и два бота одним голосом
      * звучали бы как один собеседник, переходящий из игры в игру.
@@ -251,7 +265,7 @@ data class Settings(
     val botVoiceThousand: String? = null,
     /**
      * Голос второго соперника в «Тысяче» — того, кто садится за стол, только
-     * когда за ним трое. null — голос приложения, но ниже первого бота.
+     * когда за ним трое. null — голос приложения, как и у первого бота.
      *
      * Свой голос у каждого, а не один на двоих: за столом на троих двое
      * говорят одним голосом — уже не различить, кто из них назвал сумму
@@ -259,6 +273,21 @@ data class Settings(
      */
     val botVoiceThousandSecond: String? = null,
     val botVoiceKozel: String? = null,
+    /**
+     * Синтезатор соперника — свой у каждой игры, как и голос. null — «как у
+     * приложения», пусто — «системный».
+     *
+     * Голос выбирают внутри движка, и голосов у движка бывает один: тогда
+     * бот, которому движок не сменили, говорит ровно тем же голосом, что и
+     * приложение, и различить их за столом нечем. Другой движок — различие,
+     * которое ни с чем не спутать (Катерина, 19.09: «чтобы в голосе каждого
+     * бота можно было выбирать и движок, и голос»).
+     */
+    val botEngineDurak: String? = null,
+    val botEngineThousand: String? = null,
+    /** Синтезатор второго соперника в «Тысяче» — у него свой, как и голос. */
+    val botEngineThousandSecond: String? = null,
+    val botEngineKozel: String? = null,
     /**
      * Скорость речи соперника — своя у каждой игры, как и голос. 1.0 — как
      * говорит приложение.
@@ -270,9 +299,9 @@ data class Settings(
     val botRateDurak: Float = 1.0f,
     val botRateThousand: Float = 1.0f,
     /**
-     * Скорость второго соперника в «Тысяче» — третья примета вдобавок к
-     * голосу и высоте: за столом на троих говорят трое, и различать их надо
-     * всех (Катерина, 19.09).
+     * Скорость второго соперника в «Тысяче» — ещё одна примета вдобавок к
+     * голосу и синтезатору: за столом на троих говорят трое, и различать их
+     * надо всех (Катерина, 19.09).
      */
     val botRateThousandSecond: Float = 1.0f,
     val botRateKozel: Float = 1.0f,
@@ -394,6 +423,15 @@ private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_BOT_VOICE_THOUSAND_SECOND = "bot_voice_thousand_second"
 private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
+
+/**
+ * Синтезатор соперника. Пустая строка — «системный»: она значит «движок по
+ * умолчанию», а не «как у приложения», и путать эти два состояния нельзя.
+ */
+private const val KEY_BOT_ENGINE_DURAK = "bot_engine_durak"
+private const val KEY_BOT_ENGINE_THOUSAND = "bot_engine_thousand"
+private const val KEY_BOT_ENGINE_THOUSAND_SECOND = "bot_engine_thousand_second"
+private const val KEY_BOT_ENGINE_KOZEL = "bot_engine_kozel"
 private const val KEY_BOT_RATE_DURAK = "bot_rate_durak"
 private const val KEY_BOT_RATE_THOUSAND = "bot_rate_thousand"
 private const val KEY_BOT_RATE_THOUSAND_SECOND = "bot_rate_thousand_second"
@@ -448,6 +486,10 @@ fun loadSettings(context: Context): Settings {
         botVoiceThousand = prefs.getString(KEY_BOT_VOICE_THOUSAND, null),
         botVoiceThousandSecond = prefs.getString(KEY_BOT_VOICE_THOUSAND_SECOND, null),
         botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
+        botEngineDurak = prefs.getString(KEY_BOT_ENGINE_DURAK, null),
+        botEngineThousand = prefs.getString(KEY_BOT_ENGINE_THOUSAND, null),
+        botEngineThousandSecond = prefs.getString(KEY_BOT_ENGINE_THOUSAND_SECOND, null),
+        botEngineKozel = prefs.getString(KEY_BOT_ENGINE_KOZEL, null),
         botRateDurak = readBotRate(prefs, KEY_BOT_RATE_DURAK),
         botRateThousand = readBotRate(prefs, KEY_BOT_RATE_THOUSAND),
         botRateThousandSecond = readBotRate(prefs, KEY_BOT_RATE_THOUSAND_SECOND),
@@ -535,6 +577,10 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
         .putString(KEY_BOT_VOICE_THOUSAND_SECOND, settings.botVoiceThousandSecond)
         .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
+        .putString(KEY_BOT_ENGINE_DURAK, settings.botEngineDurak)
+        .putString(KEY_BOT_ENGINE_THOUSAND, settings.botEngineThousand)
+        .putString(KEY_BOT_ENGINE_THOUSAND_SECOND, settings.botEngineThousandSecond)
+        .putString(KEY_BOT_ENGINE_KOZEL, settings.botEngineKozel)
         .putFloat(KEY_BOT_RATE_DURAK, settings.botRateDurak)
         .putFloat(KEY_BOT_RATE_THOUSAND, settings.botRateThousand)
         .putFloat(KEY_BOT_RATE_THOUSAND_SECOND, settings.botRateThousandSecond)

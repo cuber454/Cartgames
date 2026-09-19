@@ -1,6 +1,5 @@
 package games.cardgames.settings
 
-import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -67,43 +66,85 @@ private const val SAMPLE = "Так будет звучать игра. Козы�
 /**
  * Чей голос выбирают. Своя строка у каждого, кто за столом говорит.
  *
- * [inherit] называет не только чей это голос, но и как он звучит, пока
- * своего не выбрали: высота у ботов сдвинута, и «как у приложения» без
- * «выше» или «ниже» обещает ровный голос, которого за столом не будет.
+ * [inherit] — как звучит этот голос, пока своего ему не выбрали. Бот без
+ * своего голоса говорит голосом приложения: высоту ему больше не сдвигают,
+ * разводить соперников положено синтезаторами (Катерина, 19.09: «убери,
+ * чтобы повышение голоса было у каждого бота»).
  */
 private enum class VoiceSlot(val title: String, val rateLabel: String, val inherit: String) {
     APP("Голос приложения", "Скорость речи приложения", "системный"),
-    DURAK("Голос соперника в дураке", "Скорость речи соперника в дураке", "как у приложения, ниже"),
-    THOUSAND("Голос соперника в тысяче", "Скорость речи соперника в тысяче", "как у приложения, выше"),
+    DURAK("Голос соперника в дураке", "Скорость речи соперника в дураке", "как у приложения"),
+    THOUSAND("Голос соперника в тысяче", "Скорость речи соперника в тысяче", "как у приложения"),
     THOUSAND_SECOND(
         "Голос второго соперника в тысяче",
         "Скорость речи второго соперника в тысяче",
-        "как у приложения, ниже",
+        "как у приложения",
     ),
-    KOZEL("Голос соперника в козле", "Скорость речи соперника в козле", "как у приложения, ещё выше"),
+    KOZEL("Голос соперника в козле", "Скорость речи соперника в козле", "как у приложения"),
 }
 
 /**
- * Голос и высота того, чью строку настроек правят: у приложения — его
- * собственные, у соперника — его голос и его сдвиг высоты.
- *
- * Пара, а не два вызова, потому что берут их всегда вместе: голос без высоты
- * прозвучит не тем, чем говорит за столом.
+ * Каким голосом заговорит тот, чью строку настроек правят: у приложения — его
+ * собственным, у соперника — его, а не выбрали — голосом приложения.
  */
-private fun slotVoice(settings: Settings, slot: VoiceSlot): Pair<String?, Float> = when (slot) {
-    VoiceSlot.APP -> settings.voice to 1f
-    VoiceSlot.DURAK -> botVoice(settings.botVoiceDurak, settings.voice) to
-        botPitch(settings.botVoiceDurak, BOT_PITCH_DURAK)
+private fun slotVoice(settings: Settings, slot: VoiceSlot): String? =
+    if (slot == VoiceSlot.APP) {
+        settings.voice
+    } else {
+        botVoice(
+            own = slotVoiceName(settings, slot),
+            appVoice = settings.voice,
+            ownEngine = slotEngineOwn(settings, slot),
+            appEngine = settings.engine,
+        )
+    }
 
-    VoiceSlot.THOUSAND -> botVoice(settings.botVoiceThousand, settings.voice) to
-        botPitch(settings.botVoiceThousand, BOT_PITCH_THOUSAND)
-
-    VoiceSlot.THOUSAND_SECOND -> botVoice(settings.botVoiceThousandSecond, settings.voice) to
-        botPitch(settings.botVoiceThousandSecond, BOT_PITCH_THOUSAND_SECOND)
-
-    VoiceSlot.KOZEL -> botVoice(settings.botVoiceKozel, settings.voice) to
-        botPitch(settings.botVoiceKozel, BOT_PITCH_KOZEL)
+/** Что записано в настройках про синтезатор того, чью строку правят. */
+private fun slotEngineOwn(settings: Settings, slot: VoiceSlot): String? = when (slot) {
+    VoiceSlot.APP -> settings.engine
+    VoiceSlot.DURAK -> settings.botEngineDurak
+    VoiceSlot.THOUSAND -> settings.botEngineThousand
+    VoiceSlot.THOUSAND_SECOND -> settings.botEngineThousandSecond
+    VoiceSlot.KOZEL -> settings.botEngineKozel
 }
+
+/**
+ * Каким синтезатором тот, чью строку правят, заговорит на самом деле.
+ *
+ * У приложения это его собственный, у соперника — его же, пока игрок не
+ * выбрал боту другой (см. [botEngine]).
+ */
+private fun slotEngine(settings: Settings, slot: VoiceSlot): String? =
+    if (slot == VoiceSlot.APP) settings.engine
+    else botEngine(slotEngineOwn(settings, slot), settings.engine)
+
+/**
+ * Те же настройки, но с другим синтезатором у того, чья это строка.
+ *
+ * Выбранный голос при этом стирается: имя голоса живёт внутри движка, и в
+ * чужом оно значит не «тот же голос», а «первый подходящий». Оставить его
+ * значило бы обещать голос, которого новый движок не знает.
+ */
+private fun withEngine(settings: Settings, slot: VoiceSlot, engine: String?): Settings = when (slot) {
+    VoiceSlot.APP -> settings.copy(engine = engine, voice = null)
+    VoiceSlot.DURAK -> settings.copy(botEngineDurak = engine, botVoiceDurak = null)
+    VoiceSlot.THOUSAND -> settings.copy(botEngineThousand = engine, botVoiceThousand = null)
+    VoiceSlot.THOUSAND_SECOND ->
+        settings.copy(botEngineThousandSecond = engine, botVoiceThousandSecond = null)
+
+    VoiceSlot.KOZEL -> settings.copy(botEngineKozel = engine, botVoiceKozel = null)
+}
+
+/**
+ * Как звучит тот, чью строку правят, пока своего голоса ему не выбрали.
+ *
+ * Бот, говорящий синтезатором приложения, говорит и голосом приложения — так
+ * и надо сказать. А бот со своим синтезатором берёт голос, который у того
+ * движка в телефоне стоит по умолчанию: голос приложения в чужом движке не
+ * значит ничего (Катерина, 19.09).
+ */
+private fun inheritLabel(slot: VoiceSlot, settings: Settings): String =
+    if (slotVoice(settings, slot) != null) slot.inherit else "голос этого синтезатора по умолчанию"
 
 /** Скорость речи того, чью строку настроек правят. */
 private fun slotRate(settings: Settings, slot: VoiceSlot): Float = when (slot) {
@@ -154,27 +195,21 @@ private fun gameSlot(game: String): VoiceSlot = when (game) {
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
 private fun voiceRowTitle(
-    slot: VoiceSlot,
     name: String?,
     voices: List<Voice>,
-    title: String = slot.title,
+    title: String,
+    inherit: String,
 ): String {
     val index = voices.indexOfFirst { it.name == name }
-    return "$title: " + if (index < 0) slot.inherit else "${index + 1} из ${voices.size}"
+    return "$title: " + if (index < 0) inherit else "${index + 1} из ${voices.size}"
 }
 
 /**
  * Образец для пробы. Перед ним — где мы в списке: голосов в телефоне бывает
  * десяток, и без этого не понять, далеко ли ещё листать.
- *
- * [hint] — про высоту: у бота без своего голоса она сдвинута, и слышать надо
- * то же, что будет за столом, а не ровный голос приложения.
  */
-private fun sampleFor(index: Int, total: Int, hint: String?): String = buildString {
-    append(if (index < 0) "Голос по умолчанию" else "Голос ${index + 1} из $total")
-    if (hint != null) append(", $hint")
-    append(". $SAMPLE")
-}
+private fun sampleFor(index: Int, total: Int): String =
+    (if (index < 0) "Голос по умолчанию" else "Голос ${index + 1} из $total") + ". $SAMPLE"
 
 /**
  * Настройки: всё, что можно включить, выключить или выбрать.
@@ -241,8 +276,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
 
-    // Список голосов открыт для одного из троих. null — закрыт.
-    var picking by remember { mutableStateOf<VoiceSlot?>(null) }
+    // Список голосов открыт для одного из троих. null — закрыт. Голоса
+    // захвачены в момент открытия: их берут у того синтезатора, которым этот
+    // собеседник говорит, а он у каждой строки свой.
+    var picking by remember { mutableStateOf<Pair<VoiceSlot, List<Voice>>?>(null) }
 
     // Проба голоса идёт своим синтезатором, а не тем, которым говорят сами
     // настройки: голос у них разный, и подменять голос живого синтезатора
@@ -269,29 +306,68 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * этот момент не слышно, и подбирать голос на слух всё равно придётся с
      * ним — для этого есть режим «Кто говорит: приложение».
      */
-    fun auditionVoice(voice: String?, pitch: Float, text: String, rate: Float = settings.rate) {
+    fun auditionVoice(engine: String?, voice: String?, text: String, rate: Float = settings.rate) {
         if (!speech.speaks) {
             sayEvent(view, speaker, speech, text)
             return
         }
         var probe = audition
         // Синтезатор сменили — прежняя проба говорила чужим движком.
-        if (probe == null || auditionEngine != settings.engine) {
-            probe = Speaker(context, rate = rate, enginePackage = settings.engine)
+        if (probe == null || auditionEngine != engine) {
+            probe = Speaker(context, rate = rate, enginePackage = engine)
             audition = probe
-            auditionEngine = settings.engine
+            auditionEngine = engine
         } else {
             // Скорость ставим на живом движке: у пробы своя скорость на
             // каждый образец, и прежняя к новому не относится.
             probe.setRate(rate)
         }
-        probe.previewVoice(voice, text, pitch)
+        probe.previewVoice(voice, text)
     }
 
     // readyTick в ключе: пока синтезатор не поднялся, списки пустые,
     // и пересобрать их надо ровно тогда, когда он ответил.
     val engines = remember(readyTick, settings.engine) { speaker.engines() }
     val voices = remember(readyTick, settings.engine) { speaker.voices() }
+
+    // Системный синтезатор называем по имени: иначе системный и названный по
+    // имени — это один и тот же движок, а выглядят они как два разных.
+    val systemEngine = remember(engines) {
+        speaker.defaultEngine()?.let { name -> engines.firstOrNull { it.name == name }?.label ?: name }
+    }
+    val systemTitle = systemEngine?.let { "системный — $it" } ?: "системный"
+
+    /**
+     * Синтезатор соперника — свой, если игрок его ему выбрал.
+     *
+     * Заводим лениво: пока движок у бота тот же, что у приложения, второго
+     * синтезатора в телефоне нет, и поднимать его ради списка голосов,
+     * который, может, и не откроют, значит держать лишний движок.
+     */
+    @Composable
+    fun botSpeaker(slot: VoiceSlot): Speaker? {
+        val engine = slotEngine(settings, slot)
+        return if (engine == settings.engine) {
+            null
+        } else {
+            val bot = remember(engine) {
+                Speaker(
+                    context = context,
+                    rate = settings.rate,
+                    enginePackage = engine,
+                ).also { it.onReady = { readyTick++ } }
+            }
+            DisposableEffect(bot) { onDispose { bot.shutdown() } }
+            bot
+        }
+    }
+
+    /** Голоса того, чью строку правят, — из его синтезатора, а не из чужого. */
+    @Composable
+    fun slotVoices(slot: VoiceSlot): List<Voice> {
+        val bot = botSpeaker(slot)
+        return if (bot == null) voices else remember(bot, readyTick) { bot.voices() }
+    }
 
     fun save(next: Settings) {
         settings = next
@@ -358,11 +434,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     /**
      * Выбрать голос одному из троих. Выбор сразу и звучит: голос подбирают
      * на слух, а не по названию — «ru-ru-x-ruf-network» человеку не говорит
-     * ничего. Проба идёт тем же голосом и той же высотой, какими этот
-     * собеседник заговорит за столом: у приложения высота своя, у бота без
-     * своего голоса — сдвинутая, и слышать надо ровно то, что будет.
+     * ничего. Проба идёт тем же голосом и тем же синтезатором, какими этот
+     * собеседник заговорит за столом: слышать надо ровно то, что будет.
      */
-    fun pick(slot: VoiceSlot, name: String?, index: Int) {
+    fun pick(slot: VoiceSlot, name: String?, index: Int, total: Int) {
         save(
             when (slot) {
                 VoiceSlot.APP -> settings.copy(voice = name)
@@ -372,30 +447,15 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.KOZEL -> settings.copy(botVoiceKozel = name)
             },
         )
-        when (slot) {
-            VoiceSlot.APP -> auditionVoice(name, 1f, sampleFor(index, voices.size, null))
-            VoiceSlot.DURAK -> auditionVoice(
-                botVoice(name, settings.voice),
-                botPitch(name, BOT_PITCH_DURAK),
-                sampleFor(index, voices.size, if (name == null) "ниже" else null),
-            )
-            VoiceSlot.THOUSAND_SECOND -> auditionVoice(
-                name,
-                botPitch(name, BOT_PITCH_THOUSAND_SECOND),
-                sampleFor(index, voices.size, "ниже первого соперника"),
-            )
-
-            VoiceSlot.THOUSAND -> auditionVoice(
-                botVoice(name, settings.voice),
-                botPitch(name, BOT_PITCH_THOUSAND),
-                sampleFor(index, voices.size, if (name == null) "выше" else null),
-            )
-            VoiceSlot.KOZEL -> auditionVoice(
-                botVoice(name, settings.voice),
-                botPitch(name, BOT_PITCH_KOZEL),
-                sampleFor(index, voices.size, if (name == null) "ещё выше" else null),
-            )
-        }
+        // Голос берём из уже сохранённых настроек, а не считаем заново по
+        // имени: чем бот заговорит — правило одно, и записанное здесь второй
+        // раз оно однажды разошлось бы с первым.
+        auditionVoice(
+            engine = slotEngine(settings, slot),
+            voice = slotVoice(settings, slot),
+            text = sampleFor(index, total),
+            rate = slotRate(settings, slot),
+        )
     }
 
     /**
@@ -415,8 +475,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         SettingButton("$label: ${botRateTitle(value)}") {
             val next = nextBotRate(value)
             save(withRate(settings, slot, next))
-            val (voice, pitch) = slotVoice(settings, slot)
-            auditionVoice(voice, pitch, "$label: ${botRateTitle(next)}. $SAMPLE", rate = next)
+            auditionVoice(
+                engine = slotEngine(settings, slot),
+                voice = slotVoice(settings, slot),
+                text = "$label: ${botRateTitle(next)}. $SAMPLE",
+                rate = next,
+            )
         }
     }
 
@@ -427,11 +491,60 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      */
     @Composable
     fun voiceRow(slot: VoiceSlot, label: String = slot.title) {
-        SettingButton(voiceRowTitle(slot, slotVoiceName(settings, slot), voices, label)) {
-            if (voices.isEmpty()) {
+        val list = slotVoices(slot)
+        SettingButton(
+            voiceRowTitle(
+                name = slotVoiceName(settings, slot),
+                voices = list,
+                title = label,
+                inherit = inheritLabel(slot, settings),
+            ),
+        ) {
+            if (list.isEmpty()) {
                 announce("Синтезатор ещё не готов, попробуй ещё раз.")
             } else {
-                picking = slot
+                picking = slot to list
+            }
+        }
+    }
+
+    /**
+     * Строка синтезатора: чьим движком говорит тот, чья это строка.
+     *
+     * У соперника движок свой не от роскоши: голосов у движка бывает и один,
+     * и тогда бот без своего движка говорит ровно тем же голосом, что и
+     * приложение, — за столом это один и тот же человек (Катерина, 19.09:
+     * «меня всё равно разговаривает всё одним голосом»). Другой движок
+     * слышно сразу.
+     *
+     * «Как у приложения» — не то же, что «системный»: там бот говорит движком
+     * приложения и голосом приложения тоже, а тут берёт движок телефона — тот
+     * самый, которым говорит скринридер.
+     */
+    @Composable
+    fun engineRow(slot: VoiceSlot, label: String) {
+        val own = slotEngineOwn(settings, slot)
+        val options: List<Pair<String?, String>> = buildList {
+            add(null to if (slot == VoiceSlot.APP) systemTitle else slot.inherit)
+            if (slot != VoiceSlot.APP) add("" to systemTitle)
+            engines.forEach { add(it.name to it.label) }
+        }
+        val found = options.indexOfFirst { it.first == own }
+        val index = if (found < 0) 0 else found
+        SettingButton("$label: ${options[index].second} (${index + 1} из ${options.size})") {
+            if (engines.isEmpty()) {
+                announce("Список синтезаторов ещё не готов, нажми ещё раз.")
+            } else {
+                val (value, shown) = options[(index + 1) % options.size]
+                save(withEngine(settings, slot, value))
+                auditionVoice(
+                    engine = slotEngine(settings, slot),
+                    voice = slotVoice(settings, slot),
+                    text = "Синтезатор: $shown. $SAMPLE",
+                    // Скорость — его же: у бота она своя, и слышать её надо
+                    // там же, где он ею заговорит.
+                    rate = slotRate(settings, slot),
+                )
             }
         }
     }
@@ -466,22 +579,6 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         if (next != settings.rate) save(settings.copy(rate = next))
         sayEvent(view, speaker, speech, SAMPLE, whenReady = true)
     }
-
-    val activeEngine: TextToSpeech.EngineInfo? = engines.firstOrNull { it.name == settings.engine }
-    val systemEngine = remember(engines) {
-        speaker.defaultEngine()?.let { name -> engines.firstOrNull { it.name == name }?.label ?: name }
-    }
-    // Имя движка показываем и для «системного»: иначе системный и названный
-    // по имени — это один и тот же движок, а выглядят как два разных.
-    val engineLabel = when {
-        settings.engine != null -> activeEngine?.label ?: settings.engine
-        systemEngine != null -> "системный — $systemEngine"
-        else -> "системный"
-    }
-    // «2 из 3» прямо отвечает на вопрос, сколько их всего: раньше казалось,
-    // что движок в телефоне один.
-    val engineTotal = engines.size + 1
-    val enginePosition = if (activeEngine == null) 1 else engines.indexOf(activeEngine) + 2
 
     Column(
         modifier = Modifier
@@ -573,6 +670,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             Spacer(Modifier.height(8.dp))
 
             val slot = gameSlot(game)
+            engineRow(slot, "Синтезатор соперника")
             voiceRow(slot, slot.titleInGame())
             rateRow(slot, slot.rateLabelInGame())
 
@@ -587,6 +685,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 ) { name -> save(settings.copy(botNameThousandSecond = name)) }
                 Spacer(Modifier.height(8.dp))
                 val second = VoiceSlot.THOUSAND_SECOND
+                engineRow(second, "Синтезатор второго соперника")
                 voiceRow(second, second.titleInGame())
                 rateRow(second, second.rateLabelInGame())
             }
@@ -674,21 +773,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
             Spacer(Modifier.height(8.dp))
 
-            SettingButton("Синтезатор: $engineLabel ($enginePosition из $engineTotal)") {
-                if (engines.isEmpty()) {
-                    announce("Список синтезаторов ещё не готов, нажми ещё раз.")
-                } else {
-                    // Первый в списке — системный, дальше установленные в телефоне.
-                    val currentIndex = if (activeEngine == null) 0 else engines.indexOf(activeEngine) + 1
-                    val nextIndex = (currentIndex + 1) % (engines.size + 1)
-                    val nextName = if (nextIndex == 0) null else engines[nextIndex - 1].name
-                    val nextLabel = if (nextIndex == 0) "системный" else engines[nextIndex - 1].label
-                    // Голос у нового синтезатора свой, прежний ему не принадлежит:
-                    // поэтому выбор голоса начинается заново, с его умолчания.
-                    save(settings.copy(engine = nextName, voice = null))
-                    auditionVoice(null, 1f, "Синтезатор: $nextLabel. $SAMPLE")
-                }
-            }
+            engineRow(VoiceSlot.APP, "Синтезатор")
 
             // Здесь остаётся голос самого приложения. Голоса соперников ушли
             // в настройки их игр: за столом говорят приложение и три бота, и
@@ -883,19 +968,15 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     // Список голосов. Открывается поверх настроек и не закрывается после
     // выбора: голоса сравнивают на слух, перебирая несколько подряд, — а
     // закрыть его можно кнопкой «Готово», тапом мимо и системной «Назад».
-    val openSlot = picking
-    if (openSlot != null) {
+    val open = picking
+    if (open != null) {
+        val (openSlot, openVoices) = open
         VoicePickerDialog(
             slot = openSlot,
-            voices = voices,
-            current = when (openSlot) {
-                VoiceSlot.APP -> settings.voice
-                VoiceSlot.DURAK -> settings.botVoiceDurak
-                VoiceSlot.THOUSAND -> settings.botVoiceThousand
-                VoiceSlot.THOUSAND_SECOND -> settings.botVoiceThousandSecond
-                VoiceSlot.KOZEL -> settings.botVoiceKozel
-            },
-            onPick = { name, index -> pick(openSlot, name, index) },
+            voices = openVoices,
+            inherit = inheritLabel(openSlot, settings),
+            current = slotVoiceName(settings, openSlot),
+            onPick = { name, index -> pick(openSlot, name, index, openVoices.size) },
             onClose = { picking = null },
         )
     }
@@ -915,6 +996,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 private fun VoicePickerDialog(
     slot: VoiceSlot,
     voices: List<Voice>,
+    inherit: String,
     current: String?,
     onPick: (name: String?, index: Int) -> Unit,
     onClose: () -> Unit,
@@ -925,7 +1007,7 @@ private fun VoicePickerDialog(
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 VoiceOption(
-                    label = slot.inherit,
+                    label = inherit,
                     selected = current == null,
                     onClick = { onPick(null, -1) },
                 )
