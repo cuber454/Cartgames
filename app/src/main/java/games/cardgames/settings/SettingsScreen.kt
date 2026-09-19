@@ -64,12 +64,19 @@ import kotlinx.coroutines.withContext
 /** Образец речи: по нему игрок и выбирает голос — на слух, а не по названию. */
 private const val SAMPLE = "Так будет звучать игра. Козырь — пики, у тебя семёрка червей."
 
-/** Чей голос выбирают. Своя строка у каждого, кто за столом говорит. */
+/**
+ * Чей голос выбирают. Своя строка у каждого, кто за столом говорит.
+ *
+ * [inherit] называет не только чей это голос, но и как он звучит, пока
+ * своего не выбрали: высота у ботов сдвинута, и «как у приложения» без
+ * «выше» или «ниже» обещает ровный голос, которого за столом не будет.
+ */
 private enum class VoiceSlot(val title: String, val inherit: String) {
     APP("Голос приложения", "системный"),
-    DURAK("Голос соперника в дураке", "как у приложения"),
-    THOUSAND("Голос соперника в тысяче", "как у приложения"),
-    KOZEL("Голос соперника в козле", "как у приложения"),
+    DURAK("Голос соперника в дураке", "как у приложения, ниже"),
+    THOUSAND("Голос соперника в тысяче", "как у приложения, выше"),
+    THOUSAND_SECOND("Голос второго соперника в тысяче", "как у приложения, ниже"),
+    KOZEL("Голос соперника в козле", "как у приложения, ещё выше"),
 }
 
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
@@ -279,6 +286,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.APP -> settings.copy(voice = name)
                 VoiceSlot.DURAK -> settings.copy(botVoiceDurak = name)
                 VoiceSlot.THOUSAND -> settings.copy(botVoiceThousand = name)
+                VoiceSlot.THOUSAND_SECOND -> settings.copy(botVoiceThousandSecond = name)
                 VoiceSlot.KOZEL -> settings.copy(botVoiceKozel = name)
             },
         )
@@ -289,6 +297,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 botPitch(name, BOT_PITCH_DURAK),
                 sampleFor(index, voices.size, if (name == null) "ниже" else null),
             )
+            VoiceSlot.THOUSAND_SECOND -> auditionVoice(
+                name,
+                botPitch(name, BOT_PITCH_THOUSAND_SECOND),
+                sampleFor(index, voices.size, "ниже первого соперника"),
+            )
+
             VoiceSlot.THOUSAND -> auditionVoice(
                 botVoice(name, settings.voice),
                 botPitch(name, BOT_PITCH_THOUSAND),
@@ -371,6 +385,19 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 val next = botDifficulty(game, settings).next()
                 save(withBotDifficulty(game, settings, next))
                 announce("Соперник: ${next.title}.")
+            }
+
+            // Сколько мест за столом — рядом с соперником: это тоже про то,
+            // с кем играть. В «Тысячу» играют и вдвоём, и втроём, и выбор
+            // тут не про правила, а про стол (THOUSAND.md, 1.2).
+            if (game == GAME_THOUSAND) {
+                Spacer(Modifier.height(8.dp))
+                val seats = settings.thousandSeats.coerceIn(2, 3)
+                SettingButton("За столом: ${seatsTitle(seats)}") {
+                    val next = if (seats >= 3) 2 else 3
+                    save(settings.copy(thousandSeats = next))
+                    announce(seatsPhrase(next))
+                }
             }
 
             // Порядок костей — рядом с соперником и до договорённостей: это
@@ -513,6 +540,20 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 }
             }
 
+            // Голос второго соперника показываем только за столом на троих:
+            // на двоих второго бота нет, и строка была бы строкой ни о чём.
+            if (settings.thousandSeats >= 3) {
+                SettingButton(
+                    voiceRowTitle(VoiceSlot.THOUSAND_SECOND, settings.botVoiceThousandSecond, voices),
+                ) {
+                    if (voices.isEmpty()) {
+                        announce("Синтезатор ещё не готов, попробуй ещё раз.")
+                    } else {
+                        picking = VoiceSlot.THOUSAND_SECOND
+                    }
+                }
+            }
+
             SettingButton(voiceRowTitle(VoiceSlot.KOZEL, settings.botVoiceKozel, voices)) {
                 if (voices.isEmpty()) {
                     announce("Синтезатор ещё не готов, попробуй ещё раз.")
@@ -551,6 +592,24 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             )
             Spacer(Modifier.height(4.dp))
             Text("Пусто — «Бот».", style = MaterialTheme.typography.bodyMedium)
+
+            // Имя второго соперника — за столом на троих: там ботов двое, и
+            // без второго имени обоих звали бы «Бот», а различить их на слух
+            // тогда нечем (Катерина, 19.09).
+            if (settings.thousandSeats >= 3) {
+                Spacer(Modifier.height(8.dp))
+                Text("Имя второго соперника", style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = settings.botNameSecond,
+                    onValueChange = { name -> save(settings.copy(botNameSecond = name)) },
+                    singleLine = true,
+                    placeholder = { Text("Второй бот") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("Пусто — «Второй бот».", style = MaterialTheme.typography.bodyMedium)
+            }
 
             Spacer(Modifier.height(8.dp))
 
@@ -737,6 +796,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.APP -> settings.voice
                 VoiceSlot.DURAK -> settings.botVoiceDurak
                 VoiceSlot.THOUSAND -> settings.botVoiceThousand
+                VoiceSlot.THOUSAND_SECOND -> settings.botVoiceThousandSecond
                 VoiceSlot.KOZEL -> settings.botVoiceKozel
             },
             onPick = { name, index -> pick(openSlot, name, index) },

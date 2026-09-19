@@ -204,7 +204,7 @@ fun KozelScreen(
     val voice = remember(speaker, botSpeaker) {
         TableVoice(
             speaker = speaker,
-            botSpeaker = botSpeaker,
+            botSpeakers = mapOf(BOT to botSpeaker),
             view = view,
             appVoice = { appVoiceNow.value },
             rate = { rateNow.value },

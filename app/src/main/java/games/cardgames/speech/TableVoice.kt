@@ -48,14 +48,21 @@ const val PHRASE_GAP_MS = 60L
  * @param remember куда записать фразу до того, как она прозвучит: её должна
  *   знать кнопка «Повтори» с этого же мгновения.
  */
+/** Первое место за столом, которое занимает бот: игрок сидит за нулевым. */
+internal const val FIRST_BOT_SEAT = 1
+
 class TableVoice(
     private val speaker: Speaker,
     /**
-     * Голос соперника. null — бот говорит тем же синтезатором, что и
-     * приложение: так было до 0.8, и так остаётся, если игрок не завёл
-     * боту отдельный голос.
+     * Голоса соперников по их местам за столом. Пусто — бот говорит тем же
+     * синтезатором, что и приложение: так было до 0.8, и так остаётся, если
+     * игрок не завёл боту отдельный голос.
+     *
+     * По местам, а не одним голосом: за «Тысячей» на троих соперников двое,
+     * и у каждого своё имя и свой голос. Двое одним голосом за одним столом
+     * — это уже не различить, кто из них назвал сумму (Катерина, 19.09).
      */
-    private val botSpeaker: Speaker? = null,
+    private val botSpeakers: Map<Int, Speaker> = emptyMap(),
     private val view: View?,
     private val appVoice: () -> Boolean,
     private val rate: () -> Float,
@@ -95,10 +102,13 @@ class TableVoice(
      * перепутать, чья это фраза, значит услышать бота голосом приложения.
      * Когда говорит скринридер, разницы нет и быть не может — у него один
      * голос на всё, — поэтому фраза просто уходит ему, как и любая другая.
+     *
+     * [seat] — чей это ход. У места без своего голоса остаётся голос
+     * приложения: за столом, где бот один, второе место и не спрашивается.
      */
-    fun sayBot(text: String, whenReady: Boolean = false, afterMs: Long = 0L) {
+    fun sayBot(text: String, seat: Int = FIRST_BOT_SEAT, whenReady: Boolean = false, afterMs: Long = 0L) {
         note(text, afterMs)
-        val voice = botSpeaker ?: speaker
+        val voice = botSpeakers[seat] ?: speaker
         if (afterMs <= 0) {
             sayEvent(view, voice, appVoice(), text, whenReady)
             return

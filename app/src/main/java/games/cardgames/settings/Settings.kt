@@ -63,6 +63,15 @@ private val LEGACY_RATES = mapOf("SLOW" to 0.75f, "NORMAL" to 1.0f, "FAST" to 1.
  */
 const val BOT_PITCH_DURAK = 0.85f
 const val BOT_PITCH_THOUSAND = 1.2f
+/**
+ * Высота второго соперника в «Тысяче» — ниже приложения.
+ *
+ * За столом на троих один голос выше, другой ниже: два бота в одной
+ * тональности звучали бы как один, и кто назвал сумму, не различить
+ * (Катерина, 19.09). Своего голоса второму не выбрали — говорим голосом
+ * приложения, сдвинутым вниз.
+ */
+const val BOT_PITCH_THOUSAND_SECOND = 0.85f
 const val BOT_PITCH_KOZEL = 1.4f
 
 /** Голос бота: свой, а не выбрали — голос приложения. */
@@ -78,6 +87,52 @@ fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
  */
 fun botTitle(settings: Settings): String =
     settings.botName.trim().ifEmpty { "Бот" }
+
+/**
+ * Сколько мест за столом «Тысячи» — сколько их в настройках.
+ *
+ * Движок держит ровно двоих и троих и другого числа не примет, но он же и
+ * отвергнет что попало: чужая правка в хранилище — не повод упасть за
+ * столом, поэтому число здесь зажато теми же рамками.
+ */
+fun seatsAtTable(settings: Settings): Int = settings.thousandSeats.coerceIn(2, 3)
+
+/**
+ * Как звать сидящих за столом, по местам: место игрока — «ты», у прочих своё
+ * имя, а не назвали — «Бот» и «Второй бот».
+ *
+ * Список, а не одно имя, потому что за «Тысячей» на троих соперников двое,
+ * и фраза про любое из мест должна называть своё: «Петя называет 120» — это
+ * про Петю, а не про «соперника» вообще.
+ *
+ * Место игрока тоже в списке: так у фразы один способ позвать кого угодно, и
+ * нет ветки «а если это я» в каждом месте, где называют место за столом.
+ */
+fun seatTitles(settings: Settings, seats: Int): List<String> = List(seats) { seat ->
+    when (seat) {
+        0 -> "ты"
+        1 -> settings.botName.trim().ifEmpty { "Бот" }
+        else -> settings.botNameSecond.trim().ifEmpty { "Второй бот" }
+    }
+}
+
+/** Сколько мест за столом — словами: «двое» или «трое». */
+fun seatsTitle(seats: Int): String = if (seats >= 3) "трое" else "двое"
+
+/**
+ * Что сказать, когда мест за столом стало больше или меньше.
+ *
+ * Про следующую партию, а не про текущую: за столом посреди кона число
+ * игроков не меняется — сдача уже разошлась, и прикуп взят по старому
+ * столу. Обещать смену «сейчас» значило бы обещать пересдачу, которой не
+ * будет.
+ */
+fun seatsPhrase(seats: Int): String =
+    if (seats >= 3) {
+        "За столом трое: соперников двое, по семь карт и прикуп из трёх. Со следующей партии."
+    } else {
+        "За столом двое: соперник один, по десять карт и два прикупа по две. Со следующей партии."
+    }
 
 /** Высота голоса бота: своя только у бота без собственного голоса. */
 fun botPitch(own: String?, fallback: Float): Float = if (own == null) fallback else 1f
@@ -119,6 +174,15 @@ data class Settings(
      */
     val botVoiceDurak: String? = null,
     val botVoiceThousand: String? = null,
+    /**
+     * Голос второго соперника в «Тысяче» — того, кто садится за стол, только
+     * когда за ним трое. null — голос приложения, но ниже первого бота.
+     *
+     * Свой голос у каждого, а не один на двоих: за столом на троих двое
+     * говорят одним голосом — уже не различить, кто из них назвал сумму
+     * (Катерина, 19.09).
+     */
+    val botVoiceThousandSecond: String? = null,
     val botVoiceKozel: String? = null,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
@@ -130,6 +194,33 @@ data class Settings(
      * будущего, если игроку это понадобится.
      */
     val botName: String = "",
+    /**
+     * Имя второго соперника — того, кто садится за стол, только когда за ним
+     * трое. Пусто — «Второй бот» (Катерина, 19.09: «чтобы каждому боту можно
+     * было своё имя давать, например ходит Петя, ходит Вася»).
+     *
+     * Отдельным полем, а не списком: имена набирают пальцем в поле настроек,
+     * и список из двух строк — тот же список ровно до тех пор, пока в нём
+     * ровно две строки, а дальше за столом всё равно больше не садится.
+     *
+     * Имя звучит там, где бот действует: «Петя называет 120». Где фраза
+     * требует падежа, имени нет — склонять произвольное имя программа не
+     * умеет (SETTINGS.md, 8).
+     */
+    val botNameSecond: String = "",
+    /**
+     * Сколько мест за столом «Тысячи»: двое или трое.
+     *
+     * Втроём в неё играют чаще, чем вдвоём, — на троих она и сложилась: на
+     * двоих прикуп берёт один из двух и торг идёт один на один. Движок
+     * держит оба стола (прикуп 2+2 на двоих и 1+3 на троих), поэтому выбор
+     * здесь, а не в правилах: игрок сам решает, за какой стол садиться.
+     *
+     * По умолчанию двое: так партия шла до сих пор, и менять её задним
+     * числом нельзя — открытая партия продолжается за тем столом, за каким
+     * её начали (число мест записано в самой партии).
+     */
+    val thousandSeats: Int = 2,
     val sounds: Boolean = true,
     /**
      * Сигналы: короткие ноты о событиях — начало, твой ход, победа,
@@ -205,10 +296,13 @@ private const val KEY_ENGINE = "engine"
 private const val KEY_VOICE = "voice"
 private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
+private const val KEY_BOT_VOICE_THOUSAND_SECOND = "bot_voice_thousand_second"
 private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
 private const val KEY_BOT_NAME = "bot_name"
+private const val KEY_BOT_NAME_SECOND = "bot_name_second"
+private const val KEY_THOUSAND_SEATS = "thousand.seats"
 private const val KEY_SOUNDS = "sounds"
 private const val KEY_SIGNALS = "signals"
 private const val KEY_VIBRATION = "vibration"
@@ -240,12 +334,15 @@ fun loadSettings(context: Context): Settings {
         voice = prefs.getString(KEY_VOICE, null),
         botVoiceDurak = prefs.getString(KEY_BOT_VOICE_DURAK, null),
         botVoiceThousand = prefs.getString(KEY_BOT_VOICE_THOUSAND, null),
+        botVoiceThousandSecond = prefs.getString(KEY_BOT_VOICE_THOUSAND_SECOND, null),
         botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
         voiceMode = prefs.getString(KEY_VOICE_MODE, null)
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
         botName = prefs.getString(KEY_BOT_NAME, null).orEmpty(),
+        botNameSecond = prefs.getString(KEY_BOT_NAME_SECOND, null).orEmpty(),
+        thousandSeats = readSeats(prefs),
         sounds = prefs.getBoolean(KEY_SOUNDS, true),
         signals = prefs.getBoolean(KEY_SIGNALS, true),
         vibration = prefs.getBoolean(KEY_VIBRATION, true),
@@ -278,6 +375,14 @@ private fun readRate(prefs: SharedPreferences): Float =
     }
 
 /**
+ * Число мест за столом «Тысячи» из хранилища. Ключа нет — двое, как играли
+ * до того, как появился выбор: партия, начатая до обновления, продолжается
+ * за тем же столом, за каким шла.
+ */
+private fun readSeats(prefs: SharedPreferences): Int =
+    (prefs.all[KEY_THOUSAND_SEATS] as? Int)?.coerceIn(2, 3) ?: 2
+
+/**
  * Соперник из хранилища: сперва свой ключ игры, а если его ещё нет — общий
  * ключ версий до 0.9. Обе игры получают из него то же значение, которое
  * было у игрока до обновления, и выбор не теряется.
@@ -295,10 +400,13 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_VOICE, settings.voice)
         .putString(KEY_BOT_VOICE_DURAK, settings.botVoiceDurak)
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
+        .putString(KEY_BOT_VOICE_THOUSAND_SECOND, settings.botVoiceThousandSecond)
         .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
         .putString(KEY_BOT_NAME, settings.botName)
+        .putString(KEY_BOT_NAME_SECOND, settings.botNameSecond)
+        .putInt(KEY_THOUSAND_SEATS, settings.thousandSeats.coerceIn(2, 3))
         .putBoolean(KEY_SOUNDS, settings.sounds)
         .putBoolean(KEY_SIGNALS, settings.signals)
         .putBoolean(KEY_VIBRATION, settings.vibration)
