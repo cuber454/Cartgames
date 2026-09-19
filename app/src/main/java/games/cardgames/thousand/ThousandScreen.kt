@@ -37,10 +37,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import games.cardgames.settings.BOT_PITCH_THOUSAND
-import games.cardgames.settings.BOT_PITCH_THOUSAND_SECOND
 import games.cardgames.settings.GameSettingStore
-import games.cardgames.settings.botPitch
+import games.cardgames.settings.botEngine
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
 import games.cardgames.settings.seatTitles
@@ -133,12 +131,13 @@ fun ThousandScreen(
             voiceName = settings.voice,
         )
     }
-    // Голос бота — своим синтезатором: высота у него своя, а её на живом
-    // движке на ходу не поменять. Своего голоса боту не выбрали — говорим
-    // голосом приложения, но выше: за столом говорят двое, и спутать их
-    // значит не понять, чей ход.
+    // Голос бота — своим синтезатором: движок на живом синтезаторе на ходу не
+    // поменять. Своего голоса боту не выбрали — говорим голосом приложения:
+    // разводить соперников положено синтезаторами, а не высотой (Катерина,
+    // 19.09: «убери, чтобы повышение голоса было у каждого бота»).
     val botSpeaker = remember(
         settings.engine,
+        settings.botEngineThousand,
         settings.voice,
         settings.botVoiceThousand,
         settings.botRateThousand,
@@ -147,15 +146,20 @@ fun ThousandScreen(
         Speaker(
             context = context,
             rate = settings.botRateThousand,
-            enginePackage = settings.engine,
-            voiceName = botVoice(settings.botVoiceThousand, settings.voice),
-            pitch = botPitch(settings.botVoiceThousand, BOT_PITCH_THOUSAND),
+            enginePackage = botEngine(settings.botEngineThousand, settings.engine),
+            voiceName = botVoice(
+                settings.botVoiceThousand,
+                settings.voice,
+                settings.botEngineThousand,
+                settings.engine,
+            ),
         )
     }
     // Голос второго соперника — только когда за столом трое: на двоих второй
     // синтезатор был бы движком, которого никто не слышит.
     val botSpeakerSecond = remember(
         settings.engine,
+        settings.botEngineThousandSecond,
         settings.voice,
         settings.botVoiceThousandSecond,
         settings.botRateThousandSecond,
@@ -168,9 +172,13 @@ fun ThousandScreen(
             Speaker(
                 context = context,
                 rate = settings.botRateThousandSecond,
-                enginePackage = settings.engine,
-                voiceName = botVoice(settings.botVoiceThousandSecond, settings.voice),
-                pitch = botPitch(settings.botVoiceThousandSecond, BOT_PITCH_THOUSAND_SECOND),
+                enginePackage = botEngine(settings.botEngineThousandSecond, settings.engine),
+                voiceName = botVoice(
+                    settings.botVoiceThousandSecond,
+                    settings.voice,
+                    settings.botEngineThousandSecond,
+                    settings.engine,
+                ),
             )
         }
     }
