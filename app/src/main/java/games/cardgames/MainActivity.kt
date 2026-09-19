@@ -26,7 +26,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -43,21 +42,16 @@ import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
 import games.cardgames.rules.kozelRules
 import games.cardgames.rules.thousandRules
-import games.cardgames.thousand.ThousandScreen
-import games.cardgames.thousand.ThousandSession
 import games.cardgames.score.loadScore
 import games.cardgames.settings.SettingsScreen
 import games.cardgames.settings.loadSettings
-import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.Speech
-import games.cardgames.speech.sayEvent
 import games.cardgames.speech.speech
-import games.cardgames.speech.speechMs
+import games.cardgames.thousand.ThousandScreen
+import games.cardgames.thousand.ThousandSession
 import games.cardgames.update.Update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -66,44 +60,6 @@ import kotlinx.coroutines.withContext
  * пропавшую кнопку будет нечего.
  */
 private const val TREE_DUMP_DELAY_MS = 600L
-
-/**
- * Что говорят перед системным окном установки.
- *
- * Окно чужое: его рисует Андроид, а не игра, и для незрячего игрока это
- * выглядит так — приложение замолчало и пропало, а на экране что-то есть.
- * Поэтому сперва слова, потом окно: что это за окно, где на нём кнопка и что
- * будет дальше (Катерина, 19.09: «на каком системном экране непонятно»).
- */
-private const val INSTALL_EXPLANATION =
-    "Сейчас откроется системное окно установки — это окно Андроида, поверх игры. " +
-        "Внизу кнопка «Установить», нажми её дважды. Потом телефон спросит подтверждение — согласись."
-
-/** То же окно, но уже после выданного разрешения: объяснять заново нечего. */
-private const val INSTALL_RESUMED =
-    "Разрешение выдано. Открываю системное окно установки: внизу кнопка «Установить»."
-
-/**
- * Разрешение на установку выдаётся в чужом окне, и это единственный шаг,
- * который игрок делает там один: дальше приложение доводит установку само.
- */
-private const val INSTALL_PERMISSION =
-    "Сейчас откроется системный экран разрешения — это окно Андроида, а не игра. " +
-        "Включи на нём «Разрешить установку из этого источника», потом вернись в игру " +
-        "кнопкой «Назад»: дальше я продолжу сам."
-
-/** Как часто спрашивать, выдано ли разрешение, пока игрок в системном окне. */
-private const val PERMISSION_STEP_MS = 1000L
-
-/** Сколько ждать выдачи разрешения, прежде чем оставить это дело игроку. */
-private const val PERMISSION_WAIT_MS = 5 * 60 * 1000L
-
-/**
- * Запас к оценке речи под скринридером. Свою фразу приложение считает по
- * [speechMs], а скринридер о конце чтения не сообщает вовсе — и лишняя
- * секунда тишины тут дешевле оборванного на середине объяснения.
- */
-private const val READER_TAIL_MS = 1500L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -134,17 +90,24 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun App() {
     val context = LocalContext.current
-    var screen by remember { mutableStateOf("menu") }
 
-    // Куда вернуться из настроек: их можно открыть и из меню, и прямо
-    // из партии — во втором случае возвращаемся за тот же стол.
-    var settingsBack by remember { mutableStateOf("menu") }
+    // Первый экран — список игр: за приложением приходят играть, и выбирать
+    // тут нужно игру, а не раздел. Настройки с обновлением стоят строкой внизу
+    // списка — они нужны, но не каждый раз.
+    var screen by remember { mutableStateOf("games") }
+
+    // Куда вернуться из настроек: их открывают и из списка игр, и прямо из
+    // партии — во втором случае возвращаемся за тот же стол.
+    var settingsBack by remember { mutableStateOf("games") }
 
     // Справка по правилам — из того же места, откуда и настройки: посреди
     // партии в неё тоже заглядывают, и вернуться надо за тот же стол.
-    var rulesBack by remember { mutableStateOf("menu") }
+    var rulesBack by remember { mutableStateOf("games") }
     // Чьи правила открыты: у каждой игры своя справка.
     var rulesGame by remember { mutableStateOf(GAME_DURAK) }
+    // Про чью партию спрашивают: не доиграна она или нет — решает игрок, а не
+    // приложение, и вопрос этот задаётся при входе за стол.
+    var askedGame by remember { mutableStateOf(GAME_DURAK) }
 
     // Партии живут здесь, выше экранов: поход в настройки посреди партии
     // не должен её обнулять. И у каждой игры — своя: недоигранный дурак
@@ -176,29 +139,19 @@ private fun App() {
     }
 
     // Системная «Назад» уводит на шаг назад по экранам, а не закрывает
-    // приложение: случайно нажал — и вернулся в меню, а не потерял партию.
-    // В самом меню кнопку не перехватываем — там выход это выход.
-    BackHandler(enabled = screen != "menu") {
+    // приложение: случайно нажал — и вернулся в список игр, а не потерял
+    // партию. В самом списке кнопку не перехватываем — там выход это выход.
+    BackHandler(enabled = screen != "games") {
         screen = when (screen) {
             "settings" -> settingsBack
             "rules" -> rulesBack
-            // Из-за стола выходим в список игр, а не в главное меню: там
-            // рядом остальные игры, и за стол возвращаются одним нажатием.
+            // Из-за стола и от вопроса выходим в список игр: там рядом
+            // остальные игры, и за стол возвращаются одним нажатием.
             else -> "games"
         }
     }
 
     when (screen) {
-        "games" -> GamesScreen(
-            session = session,
-            thousand = thousand,
-            kozel = kozel,
-            onDurak = { screen = "durak" },
-            onThousand = { screen = "thousand" },
-            onKozel = { screen = "kozel" },
-            onBack = { screen = "menu" },
-        )
-
         "durak" -> DurakScreen(
             session = session,
             onExit = { screen = "games" },
@@ -220,10 +173,10 @@ private fun App() {
             onRules = { openRules("kozel", GAME_KOZEL) },
         )
 
-        // Чьи настройки открывать: из меню — только общие, из-за стола —
+        // Чьи настройки открывать: из списка игр — только общие, из-за стола —
         // с правилами и соперником этой игры (SETTINGS.md, 2).
         "settings" -> SettingsScreen(
-            game = settingsBack.takeIf { it != "menu" },
+            game = settingsBack.takeIf { it != "games" },
             onExit = { screen = settingsBack },
         )
 
@@ -247,185 +200,57 @@ private fun App() {
             )
         }
 
-        else -> MenuScreen(
+        // Про неоконченную партию спрашиваем при входе за стол, а не кнопками
+        // в списке игр: в списке на каждую неоконченную партию приходилось бы
+        // по две кнопки, и выбор игры превращался бы в разбор её состояния.
+        "ask" -> AskScreen(
+            game = askedGame,
+            onContinue = { screen = askedGame },
+            onNew = {
+                // Новая партия берёт правила из настроек своей игры: раздача
+                // идёт по тому, о чём договорились до стола.
+                when (askedGame) {
+                    GAME_KOZEL -> kozel.restart(rules = loadKozelRules(context))
+                    GAME_THOUSAND -> thousand.restart()
+                    else -> session.restart(rules = loadDurakRules(context))
+                }
+                screen = askedGame
+            },
+            onBack = { screen = "games" },
+        )
+
+        // Всё прочее — список игр: он же и первый экран приложения.
+        else -> GamesScreen(
             session = session,
             thousand = thousand,
             kozel = kozel,
-            onDurak = { screen = "durak" },
-            onThousand = { screen = "thousand" },
-            onKozel = { screen = "kozel" },
-            onGames = { screen = "games" },
-            onSettings = { openSettings("menu") },
+            onGame = { game, paused ->
+                if (paused) {
+                    askedGame = game
+                    screen = "ask"
+                } else {
+                    screen = game
+                }
+            },
+            onSettings = { openSettings("games") },
         )
     }
 }
 
 /**
- * Игры: то, во что здесь можно играть.
+ * Игры: то, во что здесь можно играть. Он же — первый экран приложения.
  *
- * Отдельным экраном, а не кнопками в главном меню, потому что игры
- * прибывают: за «Дураком» пришли «Тысяча» и «Козёл», за ними пойдут
- * следующие. В главном меню такой список рано или поздно вытеснил бы
- * всё остальное.
+ * Список игр стоит первым, а не кнопками в главном меню рядом с настройками:
+ * игры прибывают, и раздел, которого ещё нет, читается как поломка — «нажимаю,
+ * а он молчит» (Катерина, 19.09: «переделай главное меню, чтобы там были
+ * только игры»).
  */
 @Composable
 private fun GamesScreen(
     session: DurakSession,
     thousand: ThousandSession,
     kozel: KozelSession,
-    onDurak: () -> Unit,
-    onThousand: () -> Unit,
-    onKozel: () -> Unit,
-    onBack: () -> Unit,
-) {
-    val context = LocalContext.current
-    val settings = remember { loadSettings(context) }
-    val speaker = remember(settings.engine, settings.voice, settings.rate) {
-        Speaker(
-            context = context,
-            rate = settings.rate,
-            enginePackage = settings.engine,
-            voiceName = settings.voice,
-        )
-    }
-    DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
-
-    // Незаконченная партия: поднята с диска после перезапуска или игрок
-    // сам вышел в меню посреди игры. О ней надо сказать вслух, иначе
-    // о ней не узнать.
-    val paused = session.restored || (session.lastPhrase.isNotBlank() && !session.game.finished)
-    val thousandPaused = thousand.restored ||
-        (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
-    // В «Козле» на диске лежит матч, а не раунд: не доигран он, пока в нём
-    // никто не набрал до цели.
-    val kozelPaused = kozel.restored ||
-        (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
-
-    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
-
-    LaunchedEffect(Unit) {
-        if (!speech.speaks) return@LaunchedEffect
-        val tail = buildString {
-            if (paused) append(" Партия в дурака не доиграна, можно продолжить.")
-            if (thousandPaused) append(" Партия в тысячу не доиграна, можно продолжить.")
-            if (kozelPaused) append(" Партия в козла не доиграна, можно продолжить.")
-        }
-        speaker.say("Игры. Дурак, тысяча, козёл.$tail")
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Text("Игры", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(16.dp))
-
-        // Отсюда игру открывают осознанно — значит она и есть последняя,
-        // и в главном меню её кнопка встанет первой.
-        Button(
-            onClick = {
-                saveSettings(context, settings.copy(lastGame = GAME_DURAK))
-                onDurak()
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (paused) "Дурак — продолжить партию" else "Дурак — игра против соперника")
-        }
-
-        if (paused) {
-            Spacer(Modifier.height(8.dp))
-            // Раздача берёт режим из правил «Дурака»: перевод можно выключить
-            // («подкидной» дурак) — тогда новая партия идёт без него.
-            Button(
-                onClick = {
-                    saveSettings(context, settings.copy(lastGame = GAME_DURAK))
-                    session.restart(rules = loadDurakRules(context))
-                    onDurak()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Дурак — новая партия")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Button(
-            onClick = {
-                saveSettings(context, settings.copy(lastGame = GAME_THOUSAND))
-                onThousand()
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (thousandPaused) "Тысяча — продолжить партию" else "Тысяча — игра против соперника")
-        }
-
-        if (thousandPaused) {
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = {
-                    saveSettings(context, settings.copy(lastGame = GAME_THOUSAND))
-                    thousand.restart()
-                    onThousand()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Тысяча — новая партия")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Button(
-            onClick = {
-                saveSettings(context, settings.copy(lastGame = GAME_KOZEL))
-                onKozel()
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (kozelPaused) "Козёл — продолжить партию" else "Козёл — игра против соперника")
-        }
-
-        if (kozelPaused) {
-            Spacer(Modifier.height(8.dp))
-            // Договорённости берём из настроек «Козла»: пусто-пусто считается
-            // по-разному в разных компаниях, и решается это до раздачи.
-            Button(
-                onClick = {
-                    saveSettings(context, settings.copy(lastGame = GAME_KOZEL))
-                    kozel.restart(rules = loadKozelRules(context))
-                    onKozel()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Козёл — новая партия")
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
-    }
-}
-
-/**
- * Главное меню: игра, список игр, настройки — и общий слой озвучки.
- *
- * Порядок один и тот же, и он же — порядок дел за столом: сперва игра, в
- * которую играли последней (вернуться к ней хотят чаще всего), потом выбор
- * другой игры, потом настройки. Кнопки-заглушки здесь не стоят: раздел,
- * которого ещё нет, читается как поломка — «нажимаю, а он молчит».
- */
-@Composable
-private fun MenuScreen(
-    session: DurakSession,
-    thousand: ThousandSession,
-    kozel: KozelSession,
-    onDurak: () -> Unit,
-    onThousand: () -> Unit,
-    onKozel: () -> Unit,
-    onGames: () -> Unit,
+    onGame: (String, Boolean) -> Unit,
     onSettings: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -440,189 +265,41 @@ private fun MenuScreen(
     }
     DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
 
-    // Возвращаемся сюда после партии — счёт читаем заново, он мог измениться.
-    val score = remember { loadScore(context) }
-    // Незаконченная партия: либо её подняли с диска после перезапуска,
-    // либо игрок вышел в меню посреди игры. В обоих случаях её можно
-    // продолжить — и об этом надо сказать вслух, иначе о ней не узнать.
+    // Незаконченная партия: поднята с диска после перезапуска или игрок
+    // сам вышел в список посреди игры. О ней надо сказать вслух, иначе о ней
+    // не узнать — и по ней же приложение спрашивает при входе за стол.
     val paused = session.restored || (session.lastPhrase.isNotBlank() && !session.game.finished)
     val thousandPaused = thousand.restored ||
         (thousand.lastPhrase.isNotBlank() && thousand.match.winner == null)
+    // В «Козле» на диске лежит матч, а не раунд: не доигран он, пока в нём
+    // никто не набрал до цели.
     val kozelPaused = kozel.restored ||
         (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
-    val anyPaused = paused || thousandPaused || kozelPaused
 
-    // Кто говорит: приложение, скринридер или никто. В каждый момент — ровно один.
+    // Счёт партий: за ним сюда и заходят чаще, чем за настройками.
+    val score = remember { loadScore(context) }
+
     val speech = settings.voiceMode.speech(speaker.screenReaderOn)
 
-    // --- Обновление ------------------------------------------------------
-    //
-    // Что нашла проверка и что с этим стало. Состояние живёт здесь, в меню, а
-    // не в самой проверке: ушёл за стол — вернулся, а скачанная сборка никуда
-    // не делась, и кнопка встанет на своё место сама, по файлу на диске.
-    var fresh by remember { mutableStateOf<Update.Release?>(null) }
-    var downloaded by remember { mutableStateOf(false) }
-    var downloading by remember { mutableStateOf(false) }
-    // Сборка, установку которой мы повели за системным разрешением. Пока она
-    // здесь, приложение ждёт выдачи и потом доводит установку само: возврат из
-    // чужого окна — не тот момент, когда игроку стоит искать кнопку заново.
-    var awaiting by remember { mutableStateOf<Update.Release?>(null) }
-
-    val scope = rememberCoroutineScope()
-    val view = LocalView.current
-
-    // Фраза об обновлении идёт тем же путём, что и всё остальное на экране:
-    // при скринридере её читает он, а не второй голос поверх его чтения.
-    fun announce(text: String) = sayEvent(view, speaker, speech, text)
-
-    fun startDownload(release: Update.Release) {
-        if (downloading) return
-        downloading = true
-        scope.launch {
-            when (val got = withContext(Dispatchers.IO) { Update.download(context, release) }) {
-                is Update.Get.Ready -> {
-                    downloading = false
-                    downloaded = true
-                    announce("Сборка скачана. В меню есть кнопка «установить обновление».")
-                }
-
-                // Гонка двух загрузок: вторая ничего не делает, и говорить о
-                // ней нечего — первая скажет за обе.
-                Update.Get.Busy -> downloading = false
-
-                is Update.Get.Failed -> {
-                    downloading = false
-                    announce("Обновление не скачалось: ${got.reason}.")
-                }
-            }
-        }
-    }
-
-    /**
-     * Сказать фразу и только потом сделать дело: пауза — по длине этой фразы.
-     *
-     * Открыть системное окно сразу нельзя. Окно накрывает игру, и наша фраза —
-     * единственное, что говорит игроку, куда он попал и что там жать; начатое
-     * поверх окна объяснение обрывается на первом слове. Своё время приложение
-     * знает ([speechMs]), а скринридер о конце чтения не сообщает — под ним
-     * держим запас ([READER_TAIL_MS]).
-     */
-    fun sayThen(text: String, then: () -> Unit) {
-        announce(text)
-        val wait = when (speech) {
-            Speech.APP -> speechMs(text, speaker.rate)
-            Speech.READER -> speechMs(text, 1f) + READER_TAIL_MS
-            Speech.NONE -> 0L
-        }
-        scope.launch {
-            delay(wait)
-            then()
-        }
-    }
-
-    /**
-     * Заход к установщику. Сначала объяснение, потом системное окно.
-     *
-     * [resumed] — это продолжение после выданного разрешения: объяснять, что
-     * за окно и что в нём, второй раз незачем, игрок уже слышал.
-     */
-    fun install(release: Update.Release, resumed: Boolean = false) {
-        when (val ready = Update.install(context, release)) {
-            is Update.Install.Ready -> sayThen(if (resumed) INSTALL_RESUMED else INSTALL_EXPLANATION) {
-                Journal.note(
-                    "обновление",
-                    "открываю системное окно установки: ${ready.installer ?: "телефон не сказал, кто откроет"}",
-                )
-                val shown = runCatching { context.startActivity(ready.intent) }
-                if (shown.isFailure) {
-                    announce(
-                        "Системное окно установки не открылось: " +
-                            "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}. " +
-                            "Пришли журнал — по нему видно, что помешало.",
-                    )
-                }
-            }
-
-            // Android спрашивает разрешение на установку из этого приложения
-            // один раз и на своём экране. Ведём туда сразу — иначе кнопка
-            // выглядела бы сломанной: нажал, и ничего. А вернувшись оттуда,
-            // игрок не должен искать кнопку заново: за ним следят ([awaiting]).
-            is Update.Install.NeedsPermission -> sayThen(INSTALL_PERMISSION) {
-                val shown = runCatching { context.startActivity(ready.intent) }
-                if (shown.isSuccess) {
-                    awaiting = release
-                } else {
-                    announce(
-                        "Системный экран разрешения не открылся: " +
-                            "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.",
-                    )
-                }
-            }
-
-            is Update.Install.Failed -> announce("Установить не вышло: ${ready.reason}.")
-        }
-    }
-
-    // Ждём выдачи разрешения и продолжаем сами. Молча: игрок в это время в
-    // чужом окне, и говорить там нечего — слова вернутся вместе с ним.
-    LaunchedEffect(awaiting) {
-        val release = awaiting ?: return@LaunchedEffect
-        var waited = 0L
-        while (waited < PERMISSION_WAIT_MS) {
-            delay(PERMISSION_STEP_MS)
-            waited += PERMISSION_STEP_MS
-            if (Update.canInstall(context)) {
-                awaiting = null
-                install(release, resumed = true)
-                return@LaunchedEffect
-            }
-        }
-        // Разрешение так и не выдали — не молчим об этом: игрок ждёт установки,
-        // а её не будет, и причину надо назвать.
-        awaiting = null
-        announce("Разрешение на установку так и не выдано — обновление не встанет.")
-    }
-
-    // Проверка — при входе в меню. Файл обновления весит граммы: спрашивать о
-    // нём дешевле, чем держать игрока без новых сборок. Скачиваем же только по
-    // немобильной сети — сборка весит мегабайты, а про них не просили.
-    LaunchedEffect(Unit) {
-        if (!settings.autoUpdate) return@LaunchedEffect
-        when (val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }) {
-            is Update.Check.Fresh -> {
-                fresh = found.release
-                downloaded = withContext(Dispatchers.IO) { Update.hasDownloaded(context, found.release) }
-                Journal.note("обновление", "вышла ${found.release.title}, скачана: $downloaded")
-                when {
-                    downloaded -> Unit
-                    Update.isUnmetered(context) -> {
-                        announce("Вышла новая версия ${found.release.title}. Скачиваю.")
-                        startDownload(found.release)
-                    }
-
-                    else -> announce(
-                        "Вышла новая версия ${found.release.title}. " +
-                            "В меню есть кнопка «скачать обновление».",
-                    )
-                }
-            }
-
-            Update.Check.Current ->
-                Journal.note("обновление", "установлена последняя сборка")
-
-            is Update.Check.Failed ->
-                Journal.note("обновление", "проверка не удалась: ${found.reason}")
-        }
-    }
-
-    // Приветствие звучит только тогда, когда говорит приложение. В нём нет
-    // ничего, чего нет на экране, — а когда читает скринридер, он и так
-    // прочитает и название, и счёт, и кнопки. Наша фраза поверх его чтения
-    // была бы ровно той кашей, от которой мы уходим.
     LaunchedEffect(Unit) {
         if (!speech.speaks) return@LaunchedEffect
-        val tail = if (anyPaused) " Партия не доиграна, можно продолжить." else ""
-        speaker.say("Карточные игры. Выбери раздел. ${score.spoken()}$tail")
+        val tail = buildString {
+            if (paused) append(" Партия в дурака не доиграна.")
+            if (thousandPaused) append(" Партия в тысячу не доиграна.")
+            if (kozelPaused) append(" Партия в козла не доиграна.")
+        }
+        speaker.say("Игры. Дурак, тысяча, козёл. ${score.spoken()}$tail")
+    }
+
+    // Новая сборка не должна ждать, пока игрок заглянет в настройки: о ней
+    // приложение говорит при входе, как и раньше. Скачивание и установка
+    // живут в настройках — там же, где и был их дом.
+    LaunchedEffect(Unit) {
+        if (!settings.autoUpdate || !speech.speaks) return@LaunchedEffect
+        val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }
+        if (found is Update.Check.Fresh) {
+            speaker.say("Вышла новая версия ${found.release.title}. Скачать и поставить её можно в настройках.")
+        }
     }
 
     Column(
@@ -631,94 +308,116 @@ private fun MenuScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState()),
     ) {
-        Text("Карточные игры", style = MaterialTheme.typography.headlineSmall)
+        Text("Игры", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
         Text(score.spoken(), style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
 
-        // Последняя игра — первой строкой: за стол возвращаются чаще, чем
-        // заглядывают в список игр, и лезть ради этого в подменю ни к чему.
-        // Список игр остаётся ниже — им выбирают, когда хочется другой игры.
-        when (settings.lastGame) {
-            GAME_KOZEL -> LastGameButton(
-                label = if (kozelPaused) {
-                    "Продолжить партию в козла"
-                } else {
-                    "Козёл — игра против соперника"
-                },
-                onClick = onKozel,
-            )
-
-            GAME_THOUSAND -> LastGameButton(
-                label = if (thousandPaused) {
-                    "Продолжить партию в тысячу"
-                } else {
-                    "Тысяча — игра против соперника"
-                },
-                onClick = onThousand,
-            )
-
-            else -> LastGameButton(
-                label = if (paused) {
-                    "Продолжить партию в дурака"
-                } else {
-                    "Дурак — игра против соперника"
-                },
-                onClick = onDurak,
-            )
-        }
-
-        // Игры — отдельным разделом: сами игры живут на своём экране,
-        // чтобы список рос там, а не в главном меню.
-        Button(onClick = onGames, modifier = Modifier.fillMaxWidth()) {
-            Text(if (anyPaused) "Игры — партия не доиграна" else "Игры")
+        // Игра — одна кнопка. Не доиграна партия или нет, спрашивают при входе
+        // за стол ([AskScreen]): в списке на это уходило бы по две кнопки на
+        // игру, и выбор игры читался бы как разбор её состояния.
+        Button(
+            onClick = { onGame(GAME_DURAK, paused) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Дурак")
         }
 
         Spacer(Modifier.height(8.dp))
 
-        // Справка по правилам живёт на экране игры, в «Ещё»: её открывают
-        // за столом, когда споткнулись о ход, а не из меню. В главном меню
-        // лишняя кнопка только удлиняет список.
-        //
-        // Подпись называет то, что откроется из меню, — общую половину
-        // настроек. Настройки игры приходят сюда не отсюда, а из-за стола,
-        // кнопкой наверху (SETTINGS.md, 2).
-        Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
-            Text("Настройки — речь, звук, журнал")
+        Button(
+            onClick = { onGame(GAME_THOUSAND, thousandPaused) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Тысяча")
         }
 
-        // Кнопка обновления — внизу и только когда есть что сказать. В
-        // остальное время её нет: место постоянных кнопок не сдвигается, а
-        // палец, привыкший к «Настройкам» последними, не попадает в чужое.
-        val update = fresh
-        if (update != null) {
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { if (downloaded) install(update) else startDownload(update) },
-                enabled = !downloading,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    when {
-                        downloading -> "Скачиваю обновление ${update.title}…"
-                        downloaded -> "Установить обновление ${update.title}"
-                        else -> "Скачать обновление ${update.title}"
-                    },
-                )
-            }
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = { onGame(GAME_KOZEL, kozelPaused) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Козёл")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Настройки и обновление — одной строкой внизу списка. Обновление
+        // живёт внутри настроек, и оттуда до него одна остановка: без этой
+        // строки за свежей сборкой пришлось бы сперва сесть за стол.
+        Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
+            Text("Настройки — речь, звук, обновление, журнал")
         }
     }
 }
 
 /**
- * Кнопка последней игры.
+ * Вопрос перед неоконченной партией: продолжать её или начинать новую.
  *
- * Одна на все игры: ветки выбора различаются только подписью и тем, куда
- * ведут, а сама кнопка везде одна и та же. Разложи её по веткам — и правка
- * кнопки станет правкой в трёх местах, из которых одно забудут.
+ * Отдельным экраном, а не кнопками в списке игр: вопрос звучит один раз и
+ * ровно про ту игру, за которую игрок собирается сесть. Партию хранит
+ * приложение, но решает тут игрок — продолжение и новая раздача расходятся
+ * с этого нажатия, и отменять его потом нечем.
  */
 @Composable
-private fun LastGameButton(label: String, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(label) }
-    Spacer(Modifier.height(8.dp))
+private fun AskScreen(
+    game: String,
+    onContinue: () -> Unit,
+    onNew: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val settings = remember { loadSettings(context) }
+    val speaker = remember(settings.engine, settings.voice, settings.rate) {
+        Speaker(
+            context = context,
+            rate = settings.rate,
+            enginePackage = settings.engine,
+            voiceName = settings.voice,
+        )
+    }
+    DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
+
+    // Название игры в винительном падеже: «партия в дурака», «в тысячу»,
+    // «в козла». Подставить сюда имя из кнопки — значит сказать «партия в
+    // Козёл».
+    val what = when (game) {
+        GAME_KOZEL -> "козла"
+        GAME_THOUSAND -> "тысячу"
+        else -> "дурака"
+    }
+
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
+    LaunchedEffect(game) {
+        if (speech.speaks) {
+            speaker.say("Партия в $what не доиграна. Продолжить её или начать новую?")
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Text("Партия в $what не доиграна", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(16.dp))
+
+        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+            Text("Продолжить партию")
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) {
+            Text("Начать новую партию")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+            Text("Назад")
+        }
+    }
 }

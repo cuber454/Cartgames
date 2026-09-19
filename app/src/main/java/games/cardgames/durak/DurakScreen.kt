@@ -152,6 +152,9 @@ fun DurakScreen(
         Speaker(
             context = context,
             rate = settings.botRateDurak,
+            // Имя для журнала: за столом говорят три синтезатора, и запись
+            // без имени читается как одна речь.
+            title = "соперник",
             enginePackage = botEngine(settings.botEngineDurak, settings.engine),
             voiceName = botVoice(
                 settings.botVoiceDurak,
@@ -178,6 +181,7 @@ fun DurakScreen(
             Speaker(
                 context = context,
                 rate = settings.botRateDurakSecond,
+                title = "второй соперник",
                 enginePackage = botEngine(settings.botEngineDurakSecond, settings.engine),
                 voiceName = botVoice(
                     settings.botVoiceDurakSecond,
