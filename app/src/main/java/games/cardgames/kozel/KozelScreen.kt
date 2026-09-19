@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_KOZEL
 import games.cardgames.settings.BOT_PITCH_KOZEL
 import games.cardgames.settings.botPitch
 import games.cardgames.settings.botTitle
@@ -139,7 +140,7 @@ fun KozelScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
-    val bot = botTitle(settings)
+    val bot = botTitle(settings, GAME_KOZEL)
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(

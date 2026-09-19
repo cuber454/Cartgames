@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_DURAK
 import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.saveScore
@@ -109,7 +110,7 @@ fun DurakScreen(
     val settings = remember { loadSettings(context) }
 
     // Как звать соперника. Пусто в настройках — «Бот», как было до имени.
-    val bot = botTitle(settings)
+    val bot = botTitle(settings, GAME_DURAK)
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(

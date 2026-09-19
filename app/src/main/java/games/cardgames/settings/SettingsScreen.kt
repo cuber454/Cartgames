@@ -123,10 +123,44 @@ private fun withRate(settings: Settings, slot: VoiceSlot, rate: Float): Settings
     VoiceSlot.KOZEL -> settings.copy(botRateKozel = rate)
 }
 
+/** Голос, выбранный вручную: не выбран — null, и за столом звучит чужой. */
+private fun slotVoiceName(settings: Settings, slot: VoiceSlot): String? = when (slot) {
+    VoiceSlot.APP -> settings.voice
+    VoiceSlot.DURAK -> settings.botVoiceDurak
+    VoiceSlot.THOUSAND -> settings.botVoiceThousand
+    VoiceSlot.THOUSAND_SECOND -> settings.botVoiceThousandSecond
+    VoiceSlot.KOZEL -> settings.botVoiceKozel
+}
+
+/**
+ * Как та же строка зовётся в настройках самой игры. [title] называет ещё и
+ * игру («голос соперника в тысяче») — это для списка голосов, который
+ * открывается поверх и от самой игры оторван. В её же настройках игра названа
+ * строкой выше, и повторять её в каждой строке — лишняя остановка для пальца,
+ * который идёт по списку на слух.
+ */
+private fun VoiceSlot.titleInGame(): String =
+    if (this == VoiceSlot.THOUSAND_SECOND) "Голос второго соперника" else "Голос соперника"
+
+private fun VoiceSlot.rateLabelInGame(): String =
+    if (this == VoiceSlot.THOUSAND_SECOND) "Скорость речи второго соперника" else "Скорость речи соперника"
+
+/** Чья строка голоса отвечает этой игре. */
+private fun gameSlot(game: String): VoiceSlot = when (game) {
+    GAME_KOZEL -> VoiceSlot.KOZEL
+    GAME_THOUSAND -> VoiceSlot.THOUSAND
+    else -> VoiceSlot.DURAK
+}
+
 /** Строка выбора голоса: чей это голос и какой сейчас стоит. */
-private fun voiceRowTitle(slot: VoiceSlot, name: String?, voices: List<Voice>): String {
+private fun voiceRowTitle(
+    slot: VoiceSlot,
+    name: String?,
+    voices: List<Voice>,
+    title: String = slot.title,
+): String {
     val index = voices.indexOfFirst { it.name == name }
-    return "${slot.title}: " + if (index < 0) slot.inherit else "${index + 1} из ${voices.size}"
+    return "$title: " + if (index < 0) slot.inherit else "${index + 1} из ${voices.size}"
 }
 
 /**
@@ -376,19 +410,53 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * которую подгоняют под себя.
      */
     @Composable
-    fun rateRow(slot: VoiceSlot) {
+    fun rateRow(slot: VoiceSlot, label: String = slot.rateLabel) {
         val value = slotRate(settings, slot)
-        SettingButton("${slot.rateLabel}: ${botRateTitle(value)}") {
+        SettingButton("$label: ${botRateTitle(value)}") {
             val next = nextBotRate(value)
             save(withRate(settings, slot, next))
             val (voice, pitch) = slotVoice(settings, slot)
-            auditionVoice(
-                voice,
-                pitch,
-                "${slot.rateLabel}: ${botRateTitle(next)}. $SAMPLE",
-                rate = next,
-            )
+            auditionVoice(voice, pitch, "$label: ${botRateTitle(next)}. $SAMPLE", rate = next)
         }
+    }
+
+    /**
+     * Строка выбора голоса. Открывает тот же список, что и в общих настройках:
+     * голос подбирают на слух, а название голоса в системе —
+     * «ru-ru-x-ruf-network» — человеку не говорит ничего.
+     */
+    @Composable
+    fun voiceRow(slot: VoiceSlot, label: String = slot.title) {
+        SettingButton(voiceRowTitle(slot, slotVoiceName(settings, slot), voices, label)) {
+            if (voices.isEmpty()) {
+                announce("Синтезатор ещё не готов, попробуй ещё раз.")
+            } else {
+                picking = slot
+            }
+        }
+    }
+
+    /**
+     * Строка имени соперника — единственная на экране, которую не переключают,
+     * а набирают: имя из готовых не выбрать. Стоит рядом с его голосом и его
+     * скоростью — там всё про того, кто сидит напротив.
+     *
+     * Кнопки «Сохранить» нет намеренно: за столом имя не правят, а лишняя
+     * кнопка после поля — ещё одна остановка для пальца. Пишем на каждую букву.
+     */
+    @Composable
+    fun nameRow(label: String, value: String, empty: String, onSave: (String) -> Unit) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onSave,
+            singleLine = true,
+            placeholder = { Text(empty) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text("Пусто — «$empty».", style = MaterialTheme.typography.bodyMedium)
     }
 
     fun applyRate(value: Float) {
@@ -486,6 +554,41 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                     save(settings.copy(tileOrder = next))
                     announce("Порядок костей: ${next.title}.")
                 }
+            }
+
+            // --- Соперник этой игры ---------------------------------------
+            // Имя, голос и скорость — в настройках той игры, за столом
+            // которой соперник сидит (Катерина, 19.09: «чтобы боты были в
+            // настройках с игрой, и чтобы там всё настраивалось»). В общих
+            // они лежали одной кучей на все три игры — и в дураке рядом с
+            // голосом козла стояло имя тысячного соперника.
+            Spacer(Modifier.height(8.dp))
+
+            nameRow(
+                "Имя соперника",
+                botName(settings, game),
+                "Бот",
+            ) { name -> save(withBotName(settings, game, name)) }
+
+            Spacer(Modifier.height(8.dp))
+
+            val slot = gameSlot(game)
+            voiceRow(slot, slot.titleInGame())
+            rateRow(slot, slot.rateLabelInGame())
+
+            // Второй соперник садится за стол, только когда за ним трое: на
+            // двоих его строки — строки ни о ком.
+            if (game == GAME_THOUSAND && settings.thousandSeats >= 3) {
+                Spacer(Modifier.height(8.dp))
+                nameRow(
+                    "Имя второго соперника",
+                    settings.botNameThousandSecond,
+                    "Второй бот",
+                ) { name -> save(settings.copy(botNameThousandSecond = name)) }
+                Spacer(Modifier.height(8.dp))
+                val second = VoiceSlot.THOUSAND_SECOND
+                voiceRow(second, second.titleInGame())
+                rateRow(second, second.rateLabelInGame())
             }
 
             Spacer(Modifier.height(8.dp))
@@ -587,61 +690,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 }
             }
 
-            // Голос у каждого из четверых свой: за столом говорят приложение и
-            // три бота, и на слух их надо различать — «бот сказал» и
-            // «приложение сказало» это разные вещи, спутать их значит не
-            // понять, чей ход. Строка скорости стоит сразу под голосом: это
-            // вторая примета того же бота, и искать её в другом месте списка
-            // значит не найти (Катерина, 19.09).
-            SettingButton(voiceRowTitle(VoiceSlot.APP, settings.voice, voices)) {
-                if (voices.isEmpty()) {
-                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
-                } else {
-                    picking = VoiceSlot.APP
-                }
-            }
-
-            SettingButton(voiceRowTitle(VoiceSlot.DURAK, settings.botVoiceDurak, voices)) {
-                if (voices.isEmpty()) {
-                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
-                } else {
-                    picking = VoiceSlot.DURAK
-                }
-            }
-            rateRow(VoiceSlot.DURAK)
-
-            SettingButton(voiceRowTitle(VoiceSlot.THOUSAND, settings.botVoiceThousand, voices)) {
-                if (voices.isEmpty()) {
-                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
-                } else {
-                    picking = VoiceSlot.THOUSAND
-                }
-            }
-            rateRow(VoiceSlot.THOUSAND)
-
-            // Голос второго соперника показываем только за столом на троих:
-            // на двоих второго бота нет, и строка была бы строкой ни о чём.
-            if (settings.thousandSeats >= 3) {
-                SettingButton(
-                    voiceRowTitle(VoiceSlot.THOUSAND_SECOND, settings.botVoiceThousandSecond, voices),
-                ) {
-                    if (voices.isEmpty()) {
-                        announce("Синтезатор ещё не готов, попробуй ещё раз.")
-                    } else {
-                        picking = VoiceSlot.THOUSAND_SECOND
-                    }
-                }
-                rateRow(VoiceSlot.THOUSAND_SECOND)
-            }
-
-            SettingButton(voiceRowTitle(VoiceSlot.KOZEL, settings.botVoiceKozel, voices)) {
-                if (voices.isEmpty()) {
-                    announce("Синтезатор ещё не готов, попробуй ещё раз.")
-                } else {
-                    picking = VoiceSlot.KOZEL
-                }
-            }
-            rateRow(VoiceSlot.KOZEL)
+            // Здесь остаётся голос самого приложения. Голоса соперников ушли
+            // в настройки их игр: за столом говорят приложение и три бота, и
+            // на слух их надо различать — но настраивают бота там, где за его
+            // столом сидят, а не в общем списке, где рядом с голосом козла
+            // стояло имя тысячного соперника (Катерина, 19.09).
+            voiceRow(VoiceSlot.APP)
 
             SettingButton("Кто говорит: ${settings.voiceMode.title}") {
                 val next = settings.voiceMode.next()
@@ -649,55 +703,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 announce(whoSpeaksPhrase(next))
             }
 
-            // Имя соперника — единственная строка настроек, которую не
-            // переключают, а набирают: имя из готовых не выбрать. Стоит
-            // рядом с его голосом и репликами — здесь всё про того, кто
-            // сидит напротив.
-            //
-            // Кнопки «Сохранить» нет намеренно: за столом имя не правят, а
-            // лишняя кнопка после поля — ещё одна остановка для пальца на
-            // пути к «Репликам бота». Пишем на каждую букву.
-            //
-            // Склонять имя программа не станет: «у Меркурия» из «Меркурий»
-            // не вывести. Поэтому имя звучит там, где соперник действует
-            // («Меркурий берёт прикуп», «Взятку берёт Меркурий»), а падежные
-            // фразы говорят «соперник» (SETTINGS.md, 8).
-            //
-            // Бот себя по имени не называет: свою речь он ведёт от первого
-            // лица («Называю 120» вместо «Меркурий называет 120») — имя
-            // возвращается только там, где фразу читает скринридер. Строка от
-            // этого не лишняя: счёт, взятки и исход кона зовут его по имени
-            // всё равно (Катерина, 19.09).
-            Text("Имя соперника", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = settings.botName,
-                onValueChange = { name -> save(settings.copy(botName = name)) },
-                singleLine = true,
-                placeholder = { Text("Бот") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(4.dp))
-            Text("Пусто — «Бот».", style = MaterialTheme.typography.bodyMedium)
-
-            // Имя второго соперника — за столом на троих: там ботов двое, и
-            // без второго имени обоих звали бы «Бот», а различить их на слух
-            // тогда нечем (Катерина, 19.09).
-            if (settings.thousandSeats >= 3) {
-                Spacer(Modifier.height(8.dp))
-                Text("Имя второго соперника", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = settings.botNameSecond,
-                    onValueChange = { name -> save(settings.copy(botNameSecond = name)) },
-                    singleLine = true,
-                    placeholder = { Text("Второй бот") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(4.dp))
-                Text("Пусто — «Второй бот».", style = MaterialTheme.typography.bodyMedium)
-            }
-
+            // Имя соперника отсюда ушло: оно у каждой игры своё и стоит в её
+            // настройках, рядом с голосом и скоростью того же соперника. Само
+            // правило про имя не изменилось — не склонять произвольное имя и
+            // возвращать его из первого лица только скринридеру (SETTINGS.md, 8).
             Spacer(Modifier.height(8.dp))
 
             SettingSwitch("Реплики соперника", settings.botTalk) { value ->

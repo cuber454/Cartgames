@@ -1,5 +1,8 @@
 package games.cardgames.settings
 
+import games.cardgames.GAME_DURAK
+import games.cardgames.GAME_KOZEL
+import games.cardgames.GAME_THOUSAND
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -22,7 +25,7 @@ class TableNamesTest {
     fun `на двоих за столом только одно имя соперника`() {
         assertEquals(
             listOf("ты", "Петя"),
-            seatTitles(Settings(botName = "Петя", botNameSecond = "Вася"), 2),
+            seatTitles(Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"), 2),
         )
     }
 
@@ -37,7 +40,7 @@ class TableNamesTest {
     fun `третье место зовётся вторым именем`() {
         assertEquals(
             listOf("ты", "Петя", "Вася"),
-            seatTitles(Settings(botName = "Петя", botNameSecond = "Вася"), 3),
+            seatTitles(Settings(botNameThousand = "Петя", botNameThousandSecond = "Вася"), 3),
         )
     }
 
@@ -55,8 +58,28 @@ class TableNamesTest {
     fun `одни пробелы вместо имени считаются пустым полем`() {
         assertEquals(
             listOf("ты", "Бот", "Второй бот"),
-            seatTitles(Settings(botName = "   ", botNameSecond = "  "), 3),
+            seatTitles(Settings(botNameThousand = "   ", botNameThousandSecond = "  "), 3),
         )
+    }
+
+    /**
+     * Имя у каждой игры своё. Иначе имя, набранное за столом дурака, звало бы
+     * Петю и за тысячей, и за козлом — а там сидит кто-то другой или никто
+     * (Катерина, 19.09: «чтобы боты были в настройках с игрой»).
+     */
+    @Test
+    fun `у каждой игры своё имя соперника`() {
+        val settings = withBotName(withBotName(Settings(), GAME_DURAK, "Петя"), GAME_KOZEL, "Вася")
+        assertEquals("Петя", botTitle(settings, GAME_DURAK))
+        assertEquals("Вася", botTitle(settings, GAME_KOZEL))
+        assertEquals("Бот", botTitle(settings, GAME_THOUSAND))
+    }
+
+    /** Пустое имя — «Бот»: строка настройки не остаётся без ответа. */
+    @Test
+    fun `без имени соперник зовётся Ботом в любой игре`() {
+        assertEquals("Бот", botTitle(Settings(botNameKozel = "  "), GAME_KOZEL))
+        assertEquals("Бот", botTitle(Settings(), GAME_THOUSAND))
     }
 
     /**
