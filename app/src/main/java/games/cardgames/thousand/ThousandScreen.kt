@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_THOUSAND
 import games.cardgames.settings.GameSettingStore
 import games.cardgames.settings.botEngine
 import games.cardgames.settings.botSpeaksAlone
@@ -118,7 +119,7 @@ fun ThousandScreen(
     // своё имя. Число мест берём у партии, а не у настроек: партия помнит
     // стол, за которым её начали, и смена настройки посреди неё имён не
     // переписывает.
-    val names = seatTitles(settings, session.match.playerCount)
+    val names = seatTitles(settings, GAME_THOUSAND, session.match.playerCount)
 
     // Помощник «хвалить автоматически» — из того же хранилища, что и
     // договорённости, но в правила партии не входит: он про то, кто решает,
