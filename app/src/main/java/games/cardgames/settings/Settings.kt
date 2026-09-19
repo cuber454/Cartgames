@@ -184,6 +184,15 @@ data class Settings(
      * если приложение закрылось само или игрок случайно вышел.
      */
     val autosave: Boolean = true,
+    /**
+     * Спрашивать при входе, не вышла ли новая сборка.
+     *
+     * Включено по умолчанию: приложение живёт на телефоне у игрока, а сборки
+     * выходят на стороне — сам он о них иначе не узнает. Выключить стоит,
+     * только если обновления мешают: проверка ходит в сеть и говорит вслух,
+     * когда есть что сказать.
+     */
+    val autoUpdate: Boolean = true,
 )
 
 /**
@@ -221,6 +230,7 @@ internal const val LEGACY_KEY_TRANSFER = "transfer"
 private const val KEY_LAST_GAME = "last_game"
 private const val KEY_LARGE = "large_text"
 private const val KEY_AUTOSAVE = "autosave"
+private const val KEY_AUTO_UPDATE = "auto_update"
 
 fun loadSettings(context: Context): Settings {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -252,6 +262,7 @@ fun loadSettings(context: Context): Settings {
         lastGame = prefs.getString(KEY_LAST_GAME, null) ?: "durak",
         largeText = prefs.getBoolean(KEY_LARGE, false),
         autosave = prefs.getBoolean(KEY_AUTOSAVE, true),
+        autoUpdate = prefs.getBoolean(KEY_AUTO_UPDATE, true),
     )
 }
 
@@ -300,5 +311,6 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_LAST_GAME, settings.lastGame)
         .putBoolean(KEY_LARGE, settings.largeText)
         .putBoolean(KEY_AUTOSAVE, settings.autosave)
+        .putBoolean(KEY_AUTO_UPDATE, settings.autoUpdate)
         .apply()
 }

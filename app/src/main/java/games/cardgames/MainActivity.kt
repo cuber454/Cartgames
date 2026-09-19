@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -50,7 +51,12 @@ import games.cardgames.settings.loadSettings
 import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
+import games.cardgames.speech.sayEvent
+import games.cardgames.update.Update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Пауза перед записью дерева экрана. Снимаем его не в тот же миг, а когда
@@ -409,6 +415,111 @@ private fun MenuScreen(
     // Кто говорит: приложение или скринридер. В каждый момент — ровно один.
     val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
 
+    // --- Обновление ------------------------------------------------------
+    //
+    // Что нашла проверка и что с этим стало. Состояние живёт здесь, в меню, а
+    // не в самой проверке: ушёл за стол — вернулся, а скачанная сборка никуда
+    // не делась, и кнопка встанет на своё место сама, по файлу на диске.
+    var fresh by remember { mutableStateOf<Update.Release?>(null) }
+    var downloaded by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    val view = LocalView.current
+
+    // Фраза об обновлении идёт тем же путём, что и всё остальное на экране:
+    // при скринридере её читает он, а не второй голос поверх его чтения.
+    fun announce(text: String) = sayEvent(view, speaker, appVoice, text)
+
+    // Экран открылся или нет — сказать надо в обоих случаях. Молчание про
+    // сбой игрок читает как «нажал, и ничего»: искать причину ему негде.
+    fun locate(shown: Result<Unit>, failPrefix: String, ok: String) {
+        if (shown.isSuccess) {
+            announce(ok)
+        } else {
+            announce("$failPrefix: ${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.")
+        }
+    }
+
+    fun startDownload(release: Update.Release) {
+        if (downloading) return
+        downloading = true
+        scope.launch {
+            when (val got = withContext(Dispatchers.IO) { Update.download(context, release) }) {
+                is Update.Get.Ready -> {
+                    downloading = false
+                    downloaded = true
+                    announce("Сборка скачана. В меню есть кнопка «установить обновление».")
+                }
+
+                // Гонка двух загрузок: вторая ничего не делает, и говорить о
+                // ней нечего — первая скажет за обе.
+                Update.Get.Busy -> downloading = false
+
+                is Update.Get.Failed -> {
+                    downloading = false
+                    announce("Обновление не скачалось: ${got.reason}.")
+                }
+            }
+        }
+    }
+
+    fun install(release: Update.Release) {
+        when (val ready = Update.install(context, release)) {
+            is Update.Install.Ready -> {
+                val shown = runCatching { context.startActivity(ready.intent) }
+                locate(shown, "Установщик не открылся", "Открываю установку. Подтверди её на системном экране.")
+            }
+
+            // Android спрашивает разрешение на установку из этого приложения
+            // один раз и на своём экране. Ведём туда сразу — иначе кнопка
+            // выглядела бы сломанной: нажал, и ничего.
+            is Update.Install.NeedsPermission -> {
+                val shown = runCatching { context.startActivity(ready.intent) }
+                locate(
+                    shown,
+                    "Экран разрешения не открылся",
+                    "Разреши установку из этого приложения — откроется системный экран. " +
+                        "Потом нажми «установить обновление» ещё раз.",
+                )
+            }
+
+            is Update.Install.Failed -> announce("Установить не вышло: ${ready.reason}.")
+        }
+    }
+
+    // Проверка — при входе в меню. Файл обновления весит граммы: спрашивать о
+    // нём дешевле, чем держать игрока без новых сборок. Скачиваем же только по
+    // немобильной сети — сборка весит мегабайты, а про них не просили.
+    LaunchedEffect(Unit) {
+        if (!settings.autoUpdate) return@LaunchedEffect
+        when (val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }) {
+            is Update.Check.Fresh -> {
+                fresh = found.release
+                downloaded = withContext(Dispatchers.IO) { Update.hasDownloaded(context, found.release) }
+                Journal.note("обновление", "вышла ${found.release.title}, скачана: $downloaded")
+                when {
+                    downloaded -> Unit
+                    Update.isUnmetered(context) -> {
+                        announce("Вышла новая версия ${found.release.title}. Скачиваю.")
+                        startDownload(found.release)
+                    }
+
+                    else -> announce(
+                        "Вышла новая версия ${found.release.title}. " +
+                            "В меню есть кнопка «скачать обновление».",
+                    )
+                }
+            }
+
+            Update.Check.Current ->
+                Journal.note("обновление", "установлена последняя сборка")
+
+            is Update.Check.Failed ->
+                Journal.note("обновление", "проверка не удалась: ${found.reason}")
+        }
+    }
+
     // Приветствие звучит только тогда, когда говорит приложение. В нём нет
     // ничего, чего нет на экране, — а когда читает скринридер, он и так
     // прочитает и название, и счёт, и кнопки. Наша фраза поверх его чтения
@@ -479,6 +590,27 @@ private fun MenuScreen(
         // кнопкой наверху (SETTINGS.md, 2).
         Button(onClick = onSettings, modifier = Modifier.fillMaxWidth()) {
             Text("Настройки — речь, звук, журнал")
+        }
+
+        // Кнопка обновления — внизу и только когда есть что сказать. В
+        // остальное время её нет: место постоянных кнопок не сдвигается, а
+        // палец, привыкший к «Настройкам» последними, не попадает в чужое.
+        val update = fresh
+        if (update != null) {
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { if (downloaded) install(update) else startDownload(update) },
+                enabled = !downloading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    when {
+                        downloading -> "Скачиваю обновление ${update.title}…"
+                        downloaded -> "Установить обновление ${update.title}"
+                        else -> "Скачать обновление ${update.title}"
+                    },
+                )
+            }
         }
     }
 }

@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import games.cardgames.BuildConfig
 import games.cardgames.GAME_DURAK
 import games.cardgames.GAME_KOZEL
 import games.cardgames.GAME_THOUSAND
@@ -53,7 +55,11 @@ import games.cardgames.thousand.THOUSAND_SETTINGS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.update.Update
 import games.engine.durak.Difficulty
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Образец речи: по нему игрок и выбирает голос — на слух, а не по названию. */
 private const val SAMPLE = "Так будет звучать игра. Козырь — пики, у тебя семёрка червей."
@@ -109,6 +115,11 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     var readyTick by remember { mutableIntStateOf(0) }
     var resetAsked by remember { mutableStateOf(false) }
     var clearAsked by remember { mutableStateOf(false) }
+
+    // Проверка обновления идёт в сети: пока она идёт, кнопка говорит об этом
+    // сама — молчащая кнопка читается как «нажал, и ничего не случилось».
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     // Что открыто: настройки своей игры или общие для всей программы.
     // Из главного меню общие — единственное, что есть, и переключателя там
@@ -209,6 +220,44 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      */
     fun announce(text: String) {
         sayEvent(view, speaker, appVoice, text)
+    }
+
+    /**
+     * Проверить обновление по кнопке.
+     *
+     * Не то же, что проверка при входе в меню: здесь игрок сам об этом
+     * попросил, поэтому и скачиваем сразу, не глядя на сеть, — спрашивать про
+     * мобильную сеть у того, кто сам нажал, значит отвечать отказом на
+     * просьбу. При входе в меню наоборот: там про сборку игрока не спрашивали.
+     */
+    fun checkUpdate() {
+        if (checking) return
+        checking = true
+        scope.launch {
+            val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }
+            val said = when (found) {
+                is Update.Check.Fresh -> {
+                    val release = found.release
+                    when (val got = withContext(Dispatchers.IO) { Update.download(context, release) }) {
+                        is Update.Get.Ready ->
+                            "Есть новая версия ${release.title}, она уже скачана. " +
+                                "Открой главное меню — там кнопка «установить обновление»."
+
+                        Update.Get.Busy -> "Новая версия ${release.title} уже скачивается."
+
+                        is Update.Get.Failed ->
+                            "Новая версия ${release.title} есть, но скачать не вышло: ${got.reason}."
+                    }
+                }
+
+                Update.Check.Current ->
+                    "Установлена последняя версия, сборка ${BuildConfig.VERSION_CODE}."
+
+                is Update.Check.Failed -> "Не вышло проверить обновление: ${found.reason}."
+            }
+            checking = false
+            announce(said)
+        }
     }
 
     /**
@@ -569,6 +618,42 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                         "Автосохранение выключено. Выйдешь посреди партии — начнёшь заново."
                     },
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- Обновление -----------------------------------------------------
+
+            // Обновление — про приложение, а не про игру: оно одно за любым
+            // столом, поэтому живёт в общем блоке. Сборка стоит на телефоне у
+            // игрока, а выходят они на стороне: сам он о новой иначе не узнает.
+            Text("Обновление", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Установлена версия ${BuildConfig.VERSION_NAME}, сборка ${BuildConfig.VERSION_CODE}. " +
+                    "Новая сборка приходит сама: при входе приложение спрашивает, не вышла ли она.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            SettingSwitch("Проверять обновление при входе", settings.autoUpdate) { value ->
+                save(settings.copy(autoUpdate = value))
+                announce(
+                    if (value) {
+                        "Проверка обновления включена. При входе приложение скажет, если вышла новая сборка."
+                    } else {
+                        "Проверка обновления выключена. Новые сборки приложение искать не будет."
+                    },
+                )
+            }
+
+            SettingButton(
+                if (checking) "Проверяю обновление…" else "Проверить обновление",
+            ) {
+                if (!checking) {
+                    announce("Проверяю обновление.")
+                    checkUpdate()
+                }
             }
 
             Spacer(Modifier.height(16.dp))
