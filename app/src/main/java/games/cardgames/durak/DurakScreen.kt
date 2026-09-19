@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_DURAK
 import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.saveScore
@@ -49,12 +50,12 @@ import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.TableVoice
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableVoice
 import games.cardgames.speech.cardVerdict
-import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
+import games.cardgames.speech.verdictOf
 import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.TableBattles
@@ -109,7 +110,7 @@ fun DurakScreen(
     val settings = remember { loadSettings(context) }
 
     // Как звать соперника. Пусто в настройках — «Бот», как было до имени.
-    val bot = botTitle(settings)
+    val bot = botTitle(settings, GAME_DURAK)
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -127,11 +128,12 @@ fun DurakScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceDurak,
+        settings.botRateDurak,
         settings.rate,
     ) {
         Speaker(
             context = context,
-            rate = settings.rate,
+            rate = settings.botRateDurak,
             enginePackage = settings.engine,
             voiceName = botVoice(settings.botVoiceDurak, settings.voice),
             pitch = botPitch(settings.botVoiceDurak, BOT_PITCH_DURAK),
@@ -166,10 +168,10 @@ fun DurakScreen(
     // Крупным картам втроём тесно — тогда по две в ряд.
     val columns = if (settings.largeText) 2 else 3
 
-    // Кто говорит за столом: приложение или скринридер. В каждый момент —
-    // ровно один, иначе две речи накладываются и выходит каша. Значение
-    // живое: скринридер включают и выключают прямо посреди партии.
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    // Кто говорит за столом: приложение, скринридер или никто. В каждый
+    // момент — ровно один, иначе две речи накладываются и выходит каша.
+    // Значение живое: скринридер включают и выключают прямо посреди партии.
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
     // Фраза после звука откладывается на полсекунды — на это время нужен
     // свой корутин: переживёт перерисовку и умрёт вместе с экраном.
@@ -181,14 +183,14 @@ fun DurakScreen(
     // Кто говорит и с какой скоростью — через rememberUpdatedState: объект
     // речи переживает перерисовку, а эти два значения меняются на ходу
     // (скринридер включают посреди партии, скорость крутят в настройках).
-    val appVoiceNow = rememberUpdatedState(appVoice)
+    val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
     val voice = remember(speaker, botSpeaker) {
         TableVoice(
             speaker = speaker,
             botSpeakers = mapOf(BOT to botSpeaker),
             view = view,
-            appVoice = { appVoiceNow.value },
+            speech = { speechNow.value },
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
@@ -371,7 +373,7 @@ fun DurakScreen(
             else -> sayEvent(
                 view = view,
                 speaker = speaker,
-                appVoice = appVoice,
+                speech = speech,
                 text = "Продолжаем. " + session.lastPhrase,
                 whenReady = true,
             )

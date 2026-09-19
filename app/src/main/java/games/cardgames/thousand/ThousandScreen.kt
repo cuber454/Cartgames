@@ -49,12 +49,13 @@ import games.cardgames.sound.Vibrations
 import games.cardgames.speech.FIRST_BOT_SEAT
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
-import games.cardgames.speech.TableVoice
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableVoice
 import games.cardgames.speech.cardVerdict
-import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
+import games.cardgames.speech.speechMs
+import games.cardgames.speech.verdictOf
 import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.CardStack
@@ -140,11 +141,12 @@ fun ThousandScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceThousand,
+        settings.botRateThousand,
         settings.rate,
     ) {
         Speaker(
             context = context,
-            rate = settings.rate,
+            rate = settings.botRateThousand,
             enginePackage = settings.engine,
             voiceName = botVoice(settings.botVoiceThousand, settings.voice),
             pitch = botPitch(settings.botVoiceThousand, BOT_PITCH_THOUSAND),
@@ -156,6 +158,7 @@ fun ThousandScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceThousandSecond,
+        settings.botRateThousandSecond,
         settings.rate,
         session.match.playerCount,
     ) {
@@ -164,7 +167,7 @@ fun ThousandScreen(
         } else {
             Speaker(
                 context = context,
-                rate = settings.rate,
+                rate = settings.botRateThousandSecond,
                 enginePackage = settings.engine,
                 voiceName = botVoice(settings.botVoiceThousandSecond, settings.voice),
                 pitch = botPitch(settings.botVoiceThousandSecond, BOT_PITCH_THOUSAND_SECOND),
@@ -206,15 +209,15 @@ fun ThousandScreen(
     val tableHeight: Dp = (CARD_HEIGHT * 0.55f).dp
     val columns = if (settings.largeText) 2 else 3
 
-    // Кто говорит за столом: приложение или скринридер. В каждый момент —
-    // ровно один, иначе две речи накладываются и выходит каша.
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    // Кто говорит за столом: приложение, скринридер или никто. В каждый
+    // момент — ровно один, иначе две речи накладываются и выходит каша.
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
     // Вся речь за столом — через общий [TableVoice]: паузы, арбитраж со
     // скринридером и запись фразы для «Повтори» живут там, одни на обе игры.
-    val appVoiceNow = rememberUpdatedState(appVoice)
+    val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
     val voice = remember(speaker, botSpeaker, botSpeakerSecond) {
         TableVoice(
@@ -224,7 +227,7 @@ fun ThousandScreen(
                 botSpeakerSecond?.let { put(SECOND_BOT, it) }
             },
             view = view,
-            appVoice = { appVoiceNow.value },
+            speech = { speechNow.value },
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
@@ -233,12 +236,61 @@ fun ThousandScreen(
     }
 
     /** Реплика бота: её можно выключить в настройках. Место задаёт голос. */
-    fun sayBot(seat: Int, text: String) {
+    fun sayBot(seat: Int, text: String, afterMs: Long = 0L) {
         if (!settings.botTalk) {
             session.lastPhrase = text
             return
         }
-        voice.sayBot(text, seat = seat)
+        voice.sayBot(text, seat = seat, afterMs = afterMs)
+    }
+
+    /**
+     * Скорость речи места за столом: у каждого соперника своя (SETTINGS.md, 8).
+     * По ней считается, сколько его фраза будет звучать.
+     */
+    fun seatRate(seat: Int): Float =
+        if (seat == SECOND_BOT) settings.botRateThousandSecond else settings.botRateThousand
+
+    /**
+     * Разложить ли снос по получателям.
+     *
+     * На троих снос — это две карты двум разным людям, и одной фразой о нём
+     * говорит тот, кто сносил: голосом Пети объявлялось, что Васе досталась
+     * семёрка, и кто из них говорит, на слух не понять. Своя карта — своя
+     * речь, и говорит её тот, кому карта ушла, своим голосом.
+     *
+     * Скринридеру снос по-прежнему называют одной фразой: голос у него один
+     * на всех, и три реплики подряд он прочитает тем же голосом — только
+     * длиннее. Выключенные реплики соперника — тоже одна фраза: молчащий бот
+     * не заговорит и о полученной карте (Катерина, 19.09).
+     */
+    fun splitDiscard(move: ThousandMove): Boolean =
+        settings.botTalk && voice.appSpeaks() && move is ThousandMove.Discard && move.cards.size > 1
+
+    /**
+     * Снос по получателям: каждый говорит о своей карте сам.
+     *
+     * Реплики не ждут друг друга по очереди, а ставятся в очередь сразу с
+     * накопленной задержкой: [TableVoice] помнит, когда кончится последняя
+     * из них, и следующий ход бота начинается после неё, а не поверх.
+     * Свою карту игрок слышит голосом приложения: она про его руку, а не
+     * про чужую.
+     *
+     * [afterMs] — сколько звучит фраза того, кто сносил: с неё и начинаем.
+     */
+    fun sayDiscardReceivers(seat: Int, move: ThousandMove, round: ThousandRound, afterMs: Long) {
+        var wait = afterMs
+        discardTargets(round, seat, move).forEach { (to, card) ->
+            if (to == PLAYER) {
+                val line = "Получаешь ${card.spokenAccusative()}."
+                voice.say(line, afterMs = wait)
+                wait += speechMs(line, settings.rate) + PHRASE_GAP_MS
+            } else {
+                val line = "Мне дали ${card.spokenAccusative()}."
+                sayBot(to, line, afterMs = wait)
+                wait += speechMs(line, seatRate(to)) + PHRASE_GAP_MS
+            }
+        }
     }
 
     fun soundFor(move: ThousandMove) {
@@ -268,8 +320,12 @@ fun ThousandScreen(
      * [speaker] — чей ход закрыл взятку. Свою взятку называют «моя», чужую —
      * по имени: «Петя берёт взятку» о самом Пете звучало бы как справка
      * о нём, а не как его собственная речь.
+     *
+     * [named] — фразу читает скринридер, а не сам бот: у него один голос на
+     * всех, и «взятка моя» в его устах не говорит, чья она. Тогда и о своей
+     * взятке бот говорит по имени, как о чужой (см. [TableVoice.appSpeaks]).
      */
-    fun trickSuffix(round: ThousandRound, tricksBefore: Int, speaker: Int): String {
+    fun trickSuffix(round: ThousandRound, tricksBefore: Int, speaker: Int, named: Boolean = false): String {
         val tricks = round.tricksPlayed()
         if (tricks.size <= tricksBefore) return ""
         val trick = tricks.last()
@@ -279,7 +335,7 @@ fun ThousandScreen(
         // про кого.
         val who = when (trick.winner) {
             PLAYER -> "Взятка твоя"
-            speaker -> "Взятка моя"
+            speaker -> if (named) "Взятку берёт ${names[speaker]}" else "Взятка моя"
             else -> "Взятку берёт ${names[trick.winner]}"
         }
         return " $who, очков ${trick.points}."
@@ -359,19 +415,25 @@ fun ThousandScreen(
         // назвать его надо сейчас, иначе две новые карты придётся искать
         // в руке самому и на слух сравнивать с тем, что помнишь.
         val taken = move as? ThousandMove.TakePrikups
+        // Снос на троих разложен по получателям: своя фраза называет только
+        // снесённые карты, а о том, кому какая ушла, скажет сам получатель
+        // (см. [sayDiscardReceivers]).
+        val split = splitDiscard(move)
         val phrase = ownPhrase(
             move,
             prikup = taken?.let { round.prikup(it.index) }.orEmpty(),
-            receivers = discardReceivers(round, PLAYER, move, names),
+            receivers = if (split) emptyList() else discardReceivers(round, PLAYER, move, names),
         )
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
         round.apply(PLAYER, move)
         val gap = soundGap(move)
+        val afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L
         val trick = trickSuffix(round, tricksBefore, speaker = PLAYER)
+        val text = phrase + note + trick
         voice.sayOwnMove(
-            phrase + note + trick,
-            afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
+            text,
+            afterMs = afterMs,
             // Прикуп и взятка — то, о чём скринридер сам не расскажет: он
             // прочитал карту, которой игрок ходил, а не то, что пришло в руку
             // и не то, чья это взятка. Сказать это вполголоса, «для Повтора»,
@@ -384,6 +446,16 @@ fun ThousandScreen(
             // в конце кона (THOUSAND.md, 2.5).
             aloud = aloud || taken != null || trick.isNotEmpty() || note.isNotEmpty(),
         )
+        // Своя фраза сказана — следом получатели сноса говорят каждый о своей
+        // карте, своим голосом.
+        if (split) {
+            sayDiscardReceivers(
+                PLAYER,
+                move,
+                round,
+                afterMs = afterMs + speechMs(text, settings.rate) + PHRASE_GAP_MS,
+            )
+        }
         session.persist()
         finishIfOver()
         session.tick++
@@ -481,6 +553,15 @@ fun ThousandScreen(
             val move = ThousandBot.chooseMove(round, seat, settings.botDifficultyThousand, rng) ?: break
             val tricksBefore = round.tricksPlayed().size
             soundFor(move)
+            val split = splitDiscard(move)
+            // Говорит ли бот о себе по имени. Имя нужно только там, где фразу
+            // читает скринридер, и только на троих: у него один голос на всех,
+            // и «называет 120» без имени не говорит, кто называет. Своим
+            // голосом бот говорит о себе «я» — двоих соперников различают
+            // голоса, а не имя. За столом на двоих соперник один и различать
+            // нечего: там бот не называет себя даже под скринридером
+            // (Катерина, 19.09).
+            val named = round.playerCount >= 3 && !voice.appSpeaks()
             val phrase = botPhrase(
                 move,
                 // Взятый прикуп открывают обоим — иначе игрок так и не узнает,
@@ -488,12 +569,8 @@ fun ThousandScreen(
                 // соперника не заглядывают. Берёт бот прикуп вслепую, как и
                 // игрок, но взятое называют вслух.
                 prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
-                // За столом на двоих соперник один, и имени у него нет: он
-                // говорит о себе «я». Имя существует, чтобы различать двоих,
-                // а названное без нужды звучит объявлением, а не речью
-                // («Петя называет 120» вместо «называю 120») — Катерина, 19.09.
-                bot = if (round.playerCount >= 3) names[seat] else null,
-                receivers = discardReceivers(round, seat, move, names),
+                bot = if (named) names[seat] else null,
+                receivers = if (split) emptyList() else discardReceivers(round, seat, move, names),
             )
             round.apply(seat, move)
             // Звук хода и реплика бота стартуют в один момент и налезают
@@ -501,7 +578,20 @@ fun ThousandScreen(
             // боту ждать незачем.
             val gap = soundGap(move)
             if (settings.botTalk && gap > 0) delay(gap + PHRASE_GAP_MS)
-            sayBot(seat, phrase + trickSuffix(round, tricksBefore, speaker = seat))
+            val line = phrase + trickSuffix(round, tricksBefore, speaker = seat, named = named)
+            sayBot(seat, line)
+            // Снос на троих: карты ушли двоим, и каждый получатель говорит о
+            // своей сам — своим голосом. Одной фразой о сносе говорил тот,
+            // кто сносил, и голосом Пети объявлялось, что Васе досталась
+            // семёрка: чья это речь, на слух не понять (Катерина, 19.09).
+            if (split) {
+                sayDiscardReceivers(
+                    seat,
+                    move,
+                    round,
+                    afterMs = speechMs(line, seatRate(seat)) + PHRASE_GAP_MS,
+                )
+            }
             // Пишем после каждого хода: если приложение прибьют посреди
             // серии ходов бота, партия не откатится к её началу.
             session.persist()
@@ -574,7 +664,7 @@ fun ThousandScreen(
             else -> sayEvent(
                 view = view,
                 speaker = speaker,
-                appVoice = appVoice,
+                speech = speech,
                 text = "Продолжаем. " + session.lastPhrase,
                 whenReady = true,
             )
@@ -1132,6 +1222,10 @@ private fun botPhrase(
         // троих карт две, и без имени непонятно, какая ушла кому. Соперник
         // один — получатель всегда игрок, и живой человек сказал бы коротко,
         // «сношу тебе семёрку крести», а не «сношу: ты получаешь семёрку».
+        //
+        // Пустой [receivers] — снос разложен по получателям, и это уже не
+        // фраза сносчика: о своей карте каждый скажет сам (см.
+        // [sayDiscardReceivers]). Ему остаётся сам снос.
         is ThousandMove.Discard ->
             when {
                 bot == null && move.cards.size == 1 ->
@@ -1140,7 +1234,7 @@ private fun botPhrase(
                     "Сношу: ${receivers.joinToString(", ")}.",
                     "сносит: ${receivers.joinToString(", ")}.",
                 )
-                else -> say("Сношу карту.", "сносит карту.")
+                else -> say("Сношу.", "сносит.")
             }
 
         is ThousandMove.Praise ->
@@ -1168,11 +1262,15 @@ private fun ownPhrase(
         else "Берёшь прикуп ${move.index + 1}: ${prikup.joinToString(", ") { it.spoken() }}."
     // Снос игрока уходит соперникам, по одной карте каждому: на троих это
     // две карты двум разным людям, и кому какая — игрок иначе не узнает.
+    //
+    // Пустой [receivers] — снос разложен по получателям, и своя фраза
+    // называет только снесённые карты: о том, кому какая ушла, скажет сам
+    // получатель (см. [sayDiscardReceivers]).
     is ThousandMove.Discard ->
         if (receivers.size == move.cards.size) {
             "Сносишь: ${receivers.joinToString(", ")}."
         } else {
-            "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
+            "Сносишь ${move.cards.joinToString(", ") { it.spokenAccusative() }}."
         }
 
     // Карта названа намеренно: хвалить можно и королём, и дамой, а на стол
@@ -1204,13 +1302,29 @@ private fun discardReceivers(
     seat: Int,
     move: ThousandMove,
     names: List<String>,
-): List<String> = if (move !is ThousandMove.Discard) {
+): List<String> = discardTargets(round, seat, move).map { (to, card) ->
+    val spoken = card.spokenAccusative()
+    if (to == PLAYER) "ты получаешь $spoken" else "${names[to]} получает $spoken"
+}
+
+/**
+ * Кому и какая карта уходит в сносе — парами «место — карта», в том же
+ * порядке, как их раздаёт движок: по одной каждому следующему за столом
+ * (`partiesTo`).
+ *
+ * Место, а не имя: имя нужно там, где карту называют вслух, а здесь решается,
+ * кто получатель, — и он же говорит о своей карте сам (см.
+ * [sayDiscardReceivers]).
+ */
+private fun discardTargets(
+    round: ThousandRound,
+    seat: Int,
+    move: ThousandMove,
+): List<Pair<Int, EngineCard>> = if (move !is ThousandMove.Discard) {
     emptyList()
 } else {
     move.cards.indices.map { step ->
-        val to = (seat + step + 1) % round.playerCount
-        val card = move.cards[step].spokenAccusative()
-        if (to == PLAYER) "ты получаешь $card" else "${names[to]} получает $card"
+        ((seat + step + 1) % round.playerCount) to move.cards[step]
     }
 }
 

@@ -2,6 +2,8 @@ package games.cardgames.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import games.cardgames.GAME_KOZEL
+import games.cardgames.GAME_THOUSAND
 import games.engine.HandOrder
 import games.engine.durak.Difficulty
 import games.engine.tiles.TileOrder
@@ -9,23 +11,29 @@ import kotlin.math.round
 import kotlin.math.roundToInt
 
 /**
- * Кто говорит — приложение своим синтезатором или скринридер.
+ * Кто говорит — приложение своим синтезатором, скринридер или никто.
  *
  * Правило одно на всё приложение: в каждый момент говорит ровно один. Иначе
  * две речи накладываются и выходит каша. Скринридер говорит то, что видит на
  * экране; приложение — то, чего на экране нет: ход бота, раздачу, итог
  * партии. Когда говорит приложение, скринридеру велено умолкнуть
  * ([Speaker.interruptScreenReader]); когда говорит скринридер, приложение
- * отдаёт свои фразы ему, а не произносит поверх.
+ * отдаёт свои фразы ему, а не произносит поверх. Играют зрячие — говорит
+ * никто: приложение молчит, скринридеру ничего не уходит.
  *
  * [AUTO] — решает по обстановке: раз скринридер работает, говорить ему.
  * [ALWAYS] — говорит приложение.
  * [NEVER] — говорит скринридер.
+ * [SILENT] — не говорит никто: за столом тишина. Это для зрячего за игрой
+ * (Катерина, 19.09): ему озвучка не нужна, а вслух за столом читалось бы
+ * то, что и так видно. Приложение молчит и скринридеру ничего не отдаёт —
+ * в отличие от [NEVER], где фраза уходит ему и звучит его голосом.
  */
 enum class VoiceMode(val title: String) {
     AUTO("авто"),
     ALWAYS("приложение"),
     NEVER("скринридер"),
+    SILENT("никто"),
     ;
 
     fun next(): VoiceMode = entries[(ordinal + 1) % entries.size]
@@ -78,6 +86,29 @@ const val BOT_PITCH_KOZEL = 1.4f
 fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
 
 /**
+ * Имя соперника этой игры. Пусто — имени нет, и за столом его зовут «Бот».
+ *
+ * Имя у каждой игры своё (Катерина, 19.09: «чтобы боты были в настройках с
+ * игрой, и чтобы там всё настраивалось»). За дураком и за тысячей сидит как
+ * будто один и тот же соперник, но игры — три разных стола: за одним играют
+ * с Петей, за другим с Васей, и общее имя заставляло бы звать Петю за чужим
+ * столом. Прежнее общее имя при этом не теряется — оно переезжает в каждую
+ * игру при первом чтении настроек (см. loadSettings).
+ */
+fun botName(settings: Settings, game: String): String = when (game) {
+    GAME_KOZEL -> settings.botNameKozel
+    GAME_THOUSAND -> settings.botNameThousand
+    else -> settings.botNameDurak
+}
+
+/** Записать имя соперника той игре, чьи настройки правят. */
+fun withBotName(settings: Settings, game: String, value: String): Settings = when (game) {
+    GAME_KOZEL -> settings.copy(botNameKozel = value)
+    GAME_THOUSAND -> settings.copy(botNameThousand = value)
+    else -> settings.copy(botNameDurak = value)
+}
+
+/**
  * Как звать соперника за столом. Пусто — «Бот», как было до имени.
  *
  * Имя звучит только там, где соперник — действующий: «Меркурий берёт
@@ -85,8 +116,8 @@ fun botVoice(own: String?, appVoice: String?): String? = own ?: appVoice
  * склонять произвольное имя программа не умеет, а «у Меркурий» хуже, чем
  * вовсе без имени. Такие фразы говорят «соперник» — см. SETTINGS.md, 8.
  */
-fun botTitle(settings: Settings): String =
-    settings.botName.trim().ifEmpty { "Бот" }
+fun botTitle(settings: Settings, game: String): String =
+    botName(settings, game).trim().ifEmpty { "Бот" }
 
 /**
  * Сколько мест за столом «Тысячи» — сколько их в настройках.
@@ -123,8 +154,8 @@ fun seatTitles(settings: Settings, seats: Int): List<String> = List(seats) { sea
         // но только за столом на двоих, где различать нечего: там имя звучит
         // не речью, а справкой о себе («Петя называет 120» вместо «называю
         // 120»). Это решает экран, а не место за столом (Катерина, 19.09).
-        seat == 1 -> settings.botName.trim().ifEmpty { "Бот" }
-        else -> settings.botNameSecond.trim().ifEmpty { "Второй бот" }
+        seat == 1 -> settings.botNameThousand.trim().ifEmpty { "Бот" }
+        else -> settings.botNameThousandSecond.trim().ifEmpty { "Второй бот" }
     }
 }
 
@@ -148,6 +179,38 @@ fun seatsPhrase(seats: Int): String =
 
 /** Высота голоса бота: своя только у бота без собственного голоса. */
 fun botPitch(own: String?, fallback: Float): Float = if (own == null) fallback else 1f
+
+/**
+ * Ступени скорости речи соперника: короткий шаг вокруг обычной.
+ *
+ * Скорость — вторая примета, по которой бота узнают, когда голос у него тот
+ * же, что у приложения: высота их уже разводит, но «выше» и «ниже» на слух
+ * путаются, а быстрый говор и медленный — нет. Ступеней намеренно мало:
+ * скорость — это разборчивость, и на предельных её значениях речь бота
+ * перестаёт быть речью. Перебирают их одной кнопкой, а не ползунком
+ * (Катерина, 19.09: «вместе с синтезатором для каждого бота надо сделать
+ * регулировку скорости»).
+ */
+val BOT_RATES: List<Float> = listOf(0.75f, 0.9f, 1.0f, 1.15f, 1.4f)
+
+/**
+ * Скорость соперника словами. 1.0 — не «обычно», а «как приложение»:
+ * обычная скорость у них общая, и слово на этом месте ничего не говорит.
+ */
+fun botRateTitle(value: Float): String =
+    if (value == 1f) "как приложение" else rateTitle(value)
+
+/**
+ * Следующая ступень скорости соперника — по кругу.
+ *
+ * Ближайшая ступень, а не точное совпадение: скорость приходит из хранилища,
+ * куда её мог положить кто угодно, и кнопка, которая на чужом числе просто
+ * молчит, — хуже, чем кнопка, которая с него начинает.
+ */
+fun nextBotRate(value: Float): Float {
+    val at = BOT_RATES.indices.minByOrNull { kotlin.math.abs(BOT_RATES[it] - value) } ?: 0
+    return BOT_RATES[(at + 1) % BOT_RATES.size]
+}
 
 /** Скорость словами: «1.35» человеку ни о чём не говорит, «быстро» — говорит. */
 fun rateTitle(value: Float): String = when {
@@ -196,16 +259,36 @@ data class Settings(
      */
     val botVoiceThousandSecond: String? = null,
     val botVoiceKozel: String? = null,
+    /**
+     * Скорость речи соперника — своя у каждой игры, как и голос. 1.0 — как
+     * говорит приложение.
+     *
+     * Своя у игры, а не одна на всех: голоса у ботов разные, и одна скорость
+     * на четверых заставляла бы подгонять всех под того, кого слушаешь чаще.
+     * Ступени — [BOT_RATES].
+     */
+    val botRateDurak: Float = 1.0f,
+    val botRateThousand: Float = 1.0f,
+    /**
+     * Скорость второго соперника в «Тысяче» — третья примета вдобавок к
+     * голосу и высоте: за столом на троих говорят трое, и различать их надо
+     * всех (Катерина, 19.09).
+     */
+    val botRateThousandSecond: Float = 1.0f,
+    val botRateKozel: Float = 1.0f,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     /**
-     * Как звать соперника за столом. Пусто — «Бот».
+     * Как звать соперника — у каждой игры своё имя.
      *
-     * Имя одно на обе игры: за дураком и за тысячей сидит один и тот же
-     * соперник, просто говорит разными голосами. Развести их — дело
-     * будущего, если игроку это понадобится.
+     * Имя переехало сюда из общих настроек вслед за голосом и скоростью
+     * (Катерина, 19.09): всё про соперника настраивается в настройках той
+     * игры, за столом которой он сидит, а не в общей куче, где имя дурака
+     * стояло рядом с голосом козла. Имя при этом одно и то же на все столы
+     * дурака — их не два.
      */
-    val botName: String = "",
+    val botNameDurak: String = "",
+    val botNameThousand: String = "",
     /**
      * Имя второго соперника — того, кто садится за стол, только когда за ним
      * трое. Пусто — «Второй бот» (Катерина, 19.09: «чтобы каждому боту можно
@@ -219,7 +302,8 @@ data class Settings(
      * требует падежа, имени нет — склонять произвольное имя программа не
      * умеет (SETTINGS.md, 8).
      */
-    val botNameSecond: String = "",
+    val botNameThousandSecond: String = "",
+    val botNameKozel: String = "",
     /**
      * Сколько мест за столом «Тысячи»: двое или трое.
      *
@@ -310,8 +394,24 @@ private const val KEY_BOT_VOICE_DURAK = "bot_voice_durak"
 private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_BOT_VOICE_THOUSAND_SECOND = "bot_voice_thousand_second"
 private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
+private const val KEY_BOT_RATE_DURAK = "bot_rate_durak"
+private const val KEY_BOT_RATE_THOUSAND = "bot_rate_thousand"
+private const val KEY_BOT_RATE_THOUSAND_SECOND = "bot_rate_thousand_second"
+private const val KEY_BOT_RATE_KOZEL = "bot_rate_kozel"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
+private const val KEY_BOT_NAME_DURAK = "bot_name_durak"
+private const val KEY_BOT_NAME_THOUSAND = "bot_name_thousand"
+private const val KEY_BOT_NAME_THOUSAND_SECOND = "bot_name_thousand_second"
+private const val KEY_BOT_NAME_KOZEL = "bot_name_kozel"
+/**
+ * Прежние ключи имени — одно на все игры и имя второго соперника в тысяче.
+ *
+ * Читаются только как запасной вариант, когда своего имени у игры ещё нет:
+ * у кого настройки уже стояли, тот своё имя не потеряет — оно подставится во
+ * все три игры. Пишем только новые ключи: иначе имя дурака возвращалось бы
+ * в тысячу при каждой правке.
+ */
 private const val KEY_BOT_NAME = "bot_name"
 private const val KEY_BOT_NAME_SECOND = "bot_name_second"
 private const val KEY_THOUSAND_SEATS = "thousand.seats"
@@ -348,12 +448,18 @@ fun loadSettings(context: Context): Settings {
         botVoiceThousand = prefs.getString(KEY_BOT_VOICE_THOUSAND, null),
         botVoiceThousandSecond = prefs.getString(KEY_BOT_VOICE_THOUSAND_SECOND, null),
         botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
+        botRateDurak = readBotRate(prefs, KEY_BOT_RATE_DURAK),
+        botRateThousand = readBotRate(prefs, KEY_BOT_RATE_THOUSAND),
+        botRateThousandSecond = readBotRate(prefs, KEY_BOT_RATE_THOUSAND_SECOND),
+        botRateKozel = readBotRate(prefs, KEY_BOT_RATE_KOZEL),
         voiceMode = prefs.getString(KEY_VOICE_MODE, null)
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
-        botName = prefs.getString(KEY_BOT_NAME, null).orEmpty(),
-        botNameSecond = prefs.getString(KEY_BOT_NAME_SECOND, null).orEmpty(),
+        botNameDurak = readBotName(prefs, KEY_BOT_NAME_DURAK, KEY_BOT_NAME),
+        botNameThousand = readBotName(prefs, KEY_BOT_NAME_THOUSAND, KEY_BOT_NAME),
+        botNameThousandSecond = readBotName(prefs, KEY_BOT_NAME_THOUSAND_SECOND, KEY_BOT_NAME_SECOND),
+        botNameKozel = readBotName(prefs, KEY_BOT_NAME_KOZEL, KEY_BOT_NAME),
         thousandSeats = readSeats(prefs),
         sounds = prefs.getBoolean(KEY_SOUNDS, true),
         signals = prefs.getBoolean(KEY_SIGNALS, true),
@@ -391,6 +497,21 @@ private fun readRate(prefs: SharedPreferences): Float =
  * до того, как появился выбор: партия, начатая до обновления, продолжается
  * за тем же столом, за каким шла.
  */
+/**
+ * Скорость речи соперника из хранилища. Ключа нет — обычная: бот, которого
+ * не настраивали, говорит как приложение, и это то, к чему игрок привык.
+ */
+private fun readBotRate(prefs: SharedPreferences, key: String): Float =
+    (prefs.all[key] as? Float)?.coerceIn(RATE_MIN, RATE_MAX) ?: 1.0f
+
+/**
+ * Имя соперника из хранилища. Своего у игры ещё нет — берём прежнее общее:
+ * так имя, набранное до переезда, находится за каждым из трёх столов, а не
+ * пропадает у того, кто набирал его в общих настройках.
+ */
+private fun readBotName(prefs: SharedPreferences, key: String, legacy: String): String =
+    (prefs.getString(key, null) ?: prefs.getString(legacy, null)).orEmpty()
+
 private fun readSeats(prefs: SharedPreferences): Int =
     (prefs.all[KEY_THOUSAND_SEATS] as? Int)?.coerceIn(2, 3) ?: 2
 
@@ -414,10 +535,16 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_VOICE_THOUSAND, settings.botVoiceThousand)
         .putString(KEY_BOT_VOICE_THOUSAND_SECOND, settings.botVoiceThousandSecond)
         .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
+        .putFloat(KEY_BOT_RATE_DURAK, settings.botRateDurak)
+        .putFloat(KEY_BOT_RATE_THOUSAND, settings.botRateThousand)
+        .putFloat(KEY_BOT_RATE_THOUSAND_SECOND, settings.botRateThousandSecond)
+        .putFloat(KEY_BOT_RATE_KOZEL, settings.botRateKozel)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
-        .putString(KEY_BOT_NAME, settings.botName)
-        .putString(KEY_BOT_NAME_SECOND, settings.botNameSecond)
+        .putString(KEY_BOT_NAME_DURAK, settings.botNameDurak)
+        .putString(KEY_BOT_NAME_THOUSAND, settings.botNameThousand)
+        .putString(KEY_BOT_NAME_THOUSAND_SECOND, settings.botNameThousandSecond)
+        .putString(KEY_BOT_NAME_KOZEL, settings.botNameKozel)
         .putInt(KEY_THOUSAND_SEATS, settings.thousandSeats.coerceIn(2, 3))
         .putBoolean(KEY_SOUNDS, settings.sounds)
         .putBoolean(KEY_SIGNALS, settings.signals)

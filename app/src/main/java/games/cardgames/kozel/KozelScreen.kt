@@ -42,6 +42,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import games.cardgames.GAME_KOZEL
 import games.cardgames.settings.BOT_PITCH_KOZEL
 import games.cardgames.settings.botPitch
 import games.cardgames.settings.botTitle
@@ -53,8 +54,8 @@ import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.TableVoice
-import games.cardgames.speech.appSpeaks
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.speech
 import games.cardgames.speech.spokenVerdict
 import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandTile
@@ -139,7 +140,7 @@ fun KozelScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
-    val bot = botTitle(settings)
+    val bot = botTitle(settings, GAME_KOZEL)
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -157,11 +158,12 @@ fun KozelScreen(
         settings.engine,
         settings.voice,
         settings.botVoiceKozel,
+        settings.botRateKozel,
         settings.rate,
     ) {
         Speaker(
             context = context,
-            rate = settings.rate,
+            rate = settings.botRateKozel,
             enginePackage = settings.engine,
             voiceName = botVoice(settings.botVoiceKozel, settings.voice),
             pitch = botPitch(settings.botVoiceKozel, BOT_PITCH_KOZEL),
@@ -193,20 +195,20 @@ fun KozelScreen(
     // сама, чтобы поместиться на экран (см. раскладку стола).
     val tableWidth: Dp = (TILE_WIDTH * TABLE_SCALE).dp
 
-    val appVoice = settings.voiceMode.appSpeaks(speaker.screenReaderOn)
+    val speech = settings.voiceMode.speech(speaker.screenReaderOn)
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
     // Вся речь за столом — через общий [TableVoice]: паузы, арбитраж с
     // скринридером и запись фразы для «Повтори» живут там, одни на все игры.
-    val appVoiceNow = rememberUpdatedState(appVoice)
+    val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
     val voice = remember(speaker, botSpeaker) {
         TableVoice(
             speaker = speaker,
             botSpeakers = mapOf(BOT to botSpeaker),
             view = view,
-            appVoice = { appVoiceNow.value },
+            speech = { speechNow.value },
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
@@ -426,7 +428,7 @@ fun KozelScreen(
             else -> sayEvent(
                 view = view,
                 speaker = speaker,
-                appVoice = appVoice,
+                speech = speech,
                 text = "Продолжаем. " + session.lastPhrase,
                 whenReady = true,
             )
