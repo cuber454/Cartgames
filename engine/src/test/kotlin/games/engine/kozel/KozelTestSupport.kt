@@ -31,7 +31,7 @@ fun roundOf(
  */
 fun playRound(
     round: KozelRound,
-    difficulties: List<Difficulty> = List(SEATS) { Difficulty.NORMAL },
+    difficulties: List<Difficulty> = List(DEFAULT_SEATS) { Difficulty.NORMAL },
     random: Random = Random(1),
 ): Int {
     var moves = 0
@@ -47,16 +47,17 @@ fun playRound(
 }
 
 /**
- * Сыграть матч ботом против бота. Возвращает, кто выиграл матч, — тот, кто
- * до цели не дошёл; «козлом» становится второй, набравший.
+ * Сыграть матч ботом против бота. Возвращает, кто стал «козлом», — тот, кто
+ * дошёл до цели; выиграли все остальные места за столом.
  */
 fun playMatch(
     rules: KozelRules = KozelRules.BOOK,
-    difficulties: List<Difficulty> = List(SEATS) { Difficulty.NORMAL },
+    difficulties: List<Difficulty> = List(DEFAULT_SEATS) { Difficulty.NORMAL },
     seed: Int = 0,
+    seats: Int = DEFAULT_SEATS,
 ): Int {
     val random = Random(seed)
-    val match = KozelMatch(rules, random)
+    val match = KozelMatch(rules, random, seats)
     var rounds = 0
     while (!match.over) {
         check(rounds < 500) { "матч не кончается" }
@@ -64,5 +65,5 @@ fun playMatch(
         match.finishRound()
         rounds++
     }
-    return match.matchWinner!!
+    return match.goat!!
 }

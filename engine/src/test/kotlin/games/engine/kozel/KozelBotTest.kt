@@ -30,7 +30,7 @@ class KozelBotTest {
         seat = seat,
         hand = hand,
         line = line,
-        opponentHandSize = 7,
+        handSizes = List(DEFAULT_SEATS) { 7 },
         bazaarSize = bazaarSize,
         turn = turn,
     )

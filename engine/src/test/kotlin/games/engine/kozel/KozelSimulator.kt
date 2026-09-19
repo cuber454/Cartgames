@@ -77,9 +77,9 @@ object KozelSimulator {
     ): Result {
         require(matches > 0) { "серия пустой не бывает" }
 
-        val wins = MutableList(SEATS) { 0 }
-        val penaltySum = MutableList(SEATS) { 0.0 }
-        val penaltyRounds = MutableList(SEATS) { 0 }
+        val wins = MutableList(DEFAULT_SEATS) { 0 }
+        val penaltySum = MutableList(DEFAULT_SEATS) { 0.0 }
+        val penaltyRounds = MutableList(DEFAULT_SEATS) { 0 }
         var fish = 0
         var rounds = 0
 
@@ -97,16 +97,21 @@ object KozelSimulator {
                 val score = match.round.score()
                 rounds++
                 if (score.fish) fish++
-                // Штраф записывают проигравшему раунд — тому, у кого осталась
-                // рука. Именно его и считаем: он и есть «цена» уровня.
-                val loser = score.winner?.let { KozelRound.other(it) }
-                if (loser != null) {
-                    penaltySum[levelAt[loser]] += score.points
-                    penaltyRounds[levelAt[loser]]++
+                // Штраф записывают проигравшим раунд — тем, у кого осталась
+                // рука. Именно их и считаем: это и есть «цена» уровня. За
+                // столом на двоих проигравший один, и это по-прежнему он.
+                score.winner?.let { winner ->
+                    score.written.indices.filter { it != winner }.forEach { seat ->
+                        penaltySum[levelAt[seat]] += score.written[seat]
+                        penaltyRounds[levelAt[seat]]++
+                    }
                 }
                 match.finishRound()
             }
-            wins[levelAt[match.matchWinner!!]]++
+            // Матч выиграли все, кроме козла. За столом на двоих он один,
+            // и выигравший тоже один — прежняя победа, посчитанная от козла.
+            val goat = match.goat ?: error("матч кончился, а козла нет")
+            match.table.indices.filter { it != goat }.forEach { wins[levelAt[it]]++ }
         }
 
         return Result(

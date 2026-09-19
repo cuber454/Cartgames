@@ -59,7 +59,7 @@ class KozelBotFairnessTest {
         val (round, _) = pair()
         val view = KozelView.of(round, 0)
 
-        assertEquals(3, view.opponentHandSize)
+        assertEquals(3, view.handSizes[1])
         assertEquals(2, view.bazaarSize)
         assertEquals(round.handOf(0), view.hand)
         assertEquals(round.table, view.line)

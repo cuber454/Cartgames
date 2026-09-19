@@ -12,14 +12,20 @@ import kotlin.random.Random
 data class KozelSummary(
     /** Кто выиграл раунд. Пусто — ничейная «рыба». */
     val winner: Int?,
-    /** Сколько записали проигравшему раунд. Ноль — не записали ничего. */
-    val points: Int,
+    /**
+     * Сколько записано каждому месту за раунд: `written[seat]` — его очки.
+     *
+     * Список, а не одно число, потому что проигравших за столом на троих
+     * двое: вышедший не пишет ничего, а каждый из оставшихся считает свои.
+     * Ноль у места — ему за этот раунд не записали ничего.
+     */
+    val written: List<Int>,
     /** Раунд кончился «рыбой», а не выходом. */
     val fish: Boolean,
     /** Счёт матча после раунда: сколько набрано каждым. */
     val scores: List<Int>,
-    /** Кто выиграл матч. Пусто — матч идёт. */
-    val matchWinner: Int?,
+    /** Кто стал «козлом» — дошёл до цели. Пусто — матч идёт. */
+    val goat: Int?,
 )
 
 /**
@@ -39,29 +45,38 @@ data class KozelSummary(
 class KozelMatch(
     val rules: KozelRules = KozelRules.BOOK,
     private val random: Random = Random.Default,
+    /** Сколько мест за столом: столько же, сколько в следующем раунде. */
+    val seats: Int = DEFAULT_SEATS,
 ) {
 
+    init {
+        require(seats in MIN_SEATS..MAX_SEATS) { "за столом от $MIN_SEATS до $MAX_SEATS мест" }
+    }
+
     /** Текущий раунд. Доигранный заменяется новым. */
-    var round: KozelRound = KozelRound.deal(rules, random)
+    var round: KozelRound = KozelRound.deal(rules, random, seats)
         private set
 
     /** Сколько раундов сыграно. Нумерация с единицы. */
     var roundNumber: Int = 1
         private set
 
-    private val scores: MutableList<Int> = MutableList(SEATS) { 0 }
+    private val scores: MutableList<Int> = MutableList(seats) { 0 }
 
     /** Сколько набрано каждым. */
     val table: List<Int> get() = scores.toList()
 
-    /** Кто выиграл матч — то есть до цели дошёл не он. Пусто — матч идёт. */
-    var matchWinner: Int? = null
+    /**
+     * Кто стал «козлом» — первым набрал до цели. Пусто — матч идёт.
+     *
+     * Победителя матча в единственном числе тут нет: за столом на троих до
+     * цели не дошёл никто из двоих, и оба они выиграли одинаково. Кто именно
+     * козёл — а он ровно один, — и есть итог матча.
+     */
+    var goat: Int? = null
         private set
 
-    /** Кто стал «козлом» — первым набрал до цели. Пусто — матч идёт. */
-    val goat: Int? get() = matchWinner?.let { KozelRound.other(it) }
-
-    val over: Boolean get() = matchWinner != null
+    val over: Boolean get() = goat != null
 
     /**
      * Раунд доигран — записать его очки и сдать следующий.
@@ -76,22 +91,21 @@ class KozelMatch(
         // Очки за раунд записываются проигравшему его — тому, у кого остались
         // кости на руке. Раунд о матче ничего не знает, поэтому «проигравший
         // раунд» и «тот, кому записали» — здесь одно и то же место за столом.
-        score.winner?.let { winner -> scores[KozelRound.other(winner)] += score.points }
+        score.written.forEachIndexed { seat, points -> scores[seat] += points }
 
-        val goatNow = scores.indexOfFirst { it >= rules.target }.takeIf { it >= 0 }
-        matchWinner = goatNow?.let { KozelRound.other(it) }
+        goat = scores.indexOfFirst { it >= rules.target }.takeIf { it >= 0 }
 
         val summary = KozelSummary(
             winner = score.winner,
-            points = score.points,
+            written = score.written,
             fish = score.fish,
             scores = table,
-            matchWinner = matchWinner,
+            goat = goat,
         )
 
-        if (matchWinner == null) {
+        if (goat == null) {
             roundNumber++
-            round = KozelRound.deal(rules, random)
+            round = KozelRound.deal(rules, random, seats)
         }
         return summary
     }
@@ -112,12 +126,14 @@ class KozelMatch(
             roundNumber: Int,
             random: Random = Random.Default,
         ): KozelMatch {
-            require(scores.size == SEATS) { "за столом $SEATS места" }
+            // Стол берём из раунда: счёт и раздача обязаны быть про одних и
+            // тех же людей, и разойтись им нечем — число мест одно на двоих.
+            require(scores.size == round.seats) { "счёт не про этот стол" }
             require(!round.finished) { "доигранный раунд поднимать нечего" }
             require(scores.none { it >= rules.target }) { "матч уже кончен" }
             require(roundNumber >= 1) { "номер раунда считается с единицы" }
 
-            val match = KozelMatch(rules, random)
+            val match = KozelMatch(rules, random, round.seats)
             match.round = round
             match.roundNumber = roundNumber
             scores.forEachIndexed { seat, points -> match.scores[seat] = points }

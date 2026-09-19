@@ -24,7 +24,6 @@ class KozelMatchTest {
         assertEquals(listOf(0, 0), match.table)
         assertEquals(1, match.roundNumber)
         assertFalse(match.over)
-        assertEquals(null, match.matchWinner)
         assertEquals(null, match.goat)
         assertEquals(7, match.round.handSize(0))
         assertEquals(7, match.round.handSize(1))
@@ -46,21 +45,22 @@ class KozelMatchTest {
             val summary = match.finishRound()
 
             assertEquals(won.winner, summary.winner)
-            assertEquals(won.points, summary.points)
+            assertEquals(won.written, summary.written)
             assertEquals(won.fish, summary.fish)
 
-            val winner = summary.winner
-            if (winner == null) {
+            if (summary.winner == null) {
                 // Ничейная «рыба»: не записано никому.
-                assertEquals(0, summary.points)
+                assertEquals(listOf(0, 0), summary.written)
                 assertEquals(before, match.table)
             } else {
-                // Записали проигравшему раунд — тому, у кого осталась рука.
-                // Ноль тут не ошибка: могла остаться одна пусто-пусто, а она
-                // стоит ровно ничего.
-                val payer = KozelRound.other(winner)
-                assertEquals(before[payer] + summary.points, match.table[payer])
-                assertEquals(before[winner], match.table[winner])
+                // Записали проигравшим раунд — тем, у кого осталась рука.
+                // Ноль у места не ошибка: у вышедшего его и не бывает, а у
+                // оставшегося могла остаться одна пусто-пусто, она стоит
+                // ровно ничего.
+                summary.written.forEachIndexed { seat, points ->
+                    assertEquals(before[seat] + points, match.table[seat], "счёт места $seat")
+                }
+                assertEquals(before[summary.winner], match.table[summary.winner])
             }
 
             assertFalse(match.over)
@@ -70,7 +70,7 @@ class KozelMatchTest {
     }
 
     @Test
-    fun `кто первым набрал до цели — тот козёл, матч за вторым`() {
+    fun `кто первым набрал до цели — тот козёл, матч за остальными`() {
         val target = 25
 
         for (seed in 0 until 8) {
@@ -86,12 +86,12 @@ class KozelMatchTest {
             }
 
             val goat = match.goat ?: error("матч кончился, а козла нет")
-            val winner = match.matchWinner ?: error("матч кончился, а победителя нет")
 
             assertTrue(match.table[goat] >= target, "козёл не дошёл до цели")
-            assertTrue(match.table[winner] < target, "победитель тоже дошёл до цели")
-            assertEquals(goat, KozelRound.other(winner), "козлом должен быть второй")
-            assertNotEquals(winner, goat)
+            // Козёл ровно один: остальные до цели не дошли.
+            match.table.indices.filter { it != goat }.forEach { seat ->
+                assertTrue(match.table[seat] < target, "до цели дошёл не только козёл")
+            }
             assertEquals(rounds, match.roundNumber, "номер раунда разошёлся с числом сыгранных")
         }
     }
@@ -114,8 +114,8 @@ class KozelMatchTest {
     @Test
     fun `бот против бота всегда доигрывает матч до конца`() {
         for (seed in 0 until 6) {
-            val winner = playMatch(KozelRules.BOOK, listOf(Difficulty.CLEVER, Difficulty.NORMAL), seed)
-            assertTrue(winner == 0 || winner == 1)
+            val goat = playMatch(KozelRules.BOOK, listOf(Difficulty.CLEVER, Difficulty.NORMAL), seed)
+            assertTrue(goat == 0 || goat == 1)
         }
     }
 }
