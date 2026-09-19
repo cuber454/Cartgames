@@ -46,7 +46,7 @@ object KozelSave {
         // помнить, что он был.
         appendLine("passes ${round.passes}")
         appendLine("bazaar ${round.bazaarTiles.joinToString(" ") { codeOf(it) }}")
-        for (seat in 0 until SEATS) {
+        for (seat in 0 until round.seats) {
             appendLine("hand$seat ${round.handOf(seat).joinToString(" ") { codeOf(it) }}")
         }
         appendLine("line ${round.table.tiles.joinToString(" ") { codeOf(it) }}")
@@ -82,16 +82,21 @@ object KozelSave {
         }
 
         if (fields["format"]?.toIntOrNull() != FORMAT) return null
-        // Руки идут подряд, без пропусков: hand0, hand1, ... Иначе запись
+        // Сколько мест за столом, знают руки: их на диске по одной на место.
+        // Запись про стол, которого не бывает, — битая: мест либо два, либо
+        // три, и никак иначе.
+        val seats = hands.size
+        if (seats !in MIN_SEATS..MAX_SEATS) return null
+        // И идут они подряд, без пропусков: hand0, hand1, ... Иначе запись
         // собрана не про этот стол.
-        if (hands.keys != (0 until SEATS).toSet()) return null
+        if (hands.keys != (0 until seats).toSet()) return null
 
         val target = fields["target"]?.toIntOrNull() ?: return null
         val roundNumber = fields["round"]?.toIntOrNull() ?: return null
         val turn = fields["turn"]?.toIntOrNull() ?: return null
-        if (target <= 0 || roundNumber < 1 || turn !in 0 until SEATS) return null
+        if (target <= 0 || roundNumber < 1 || turn !in 0 until seats) return null
 
-        val scores = (0 until SEATS).map { fields["score$it"]?.toIntOrNull() ?: return null }
+        val scores = (0 until seats).map { fields["score$it"]?.toIntOrNull() ?: return null }
         // Матч, у которого кто-то уже дошёл до цели, доигран: это не пауза,
         // а итог, и поднимать его незачем.
         if (scores.any { it >= target }) return null
@@ -158,7 +163,9 @@ object KozelSave {
         }
         // Кость не лежит на столе дважды.
         if (laid.toSet().size != laid.size) return null
-        if (parts.size != SEATS) return null
+        // Концов у линии всегда два — и вдвоём, и втроём: число мест за
+        // столом на них не влияет.
+        if (parts.size != 2) return null
 
         val left = parts[0].toIntOrNull() ?: return null
         val right = parts[1].toIntOrNull() ?: return null

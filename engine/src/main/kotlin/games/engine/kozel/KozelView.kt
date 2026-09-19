@@ -24,16 +24,19 @@ data class KozelView(
     val hand: List<Tile>,
     /** Линия на столе: она открыта всем. */
     val line: Line,
-    /** Сколько костей на руке у противника. Которые именно — неизвестно. */
-    val opponentHandSize: Int,
+    /** Сколько костей на руке у каждого места. Которые именно — неизвестно. */
+    val handSizes: List<Int>,
     /** Сколько костей осталось в базаре. Которые именно — неизвестно. */
     val bazaarSize: Int,
     /** Чей ход. */
     val turn: Int,
 ) {
 
-    /** Место противника. За столом их двое, поэтому это просто «не он». */
-    val opponentSeat: Int get() = KozelRound.other(seat)
+    /** Сколько мест за столом. Размеры рук известны про всех — по ним и считаем. */
+    val seats: Int get() = handSizes.size
+
+    /** Места, кроме своего. Про них бот знает только число костей. */
+    val others: List<Int> get() = handSizes.indices.filter { it != seat }
 
     /**
      * Допустимые ходы — те же, что предложили бы игроку: подходящая кость
@@ -66,7 +69,7 @@ data class KozelView(
             seat = seat,
             hand = round.handOf(seat).toList(),
             line = round.table,
-            opponentHandSize = round.handSize(KozelRound.other(seat)),
+            handSizes = List(round.seats) { round.handSize(it) },
             bazaarSize = round.bazaarSize,
             turn = round.turn,
         )

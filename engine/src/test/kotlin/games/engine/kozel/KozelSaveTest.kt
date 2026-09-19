@@ -45,7 +45,7 @@ class KozelSaveTest {
             assertEquals(before.bazaarSize, after.bazaarSize)
             assertEquals(before.bazaarTiles, after.bazaarTiles)
             assertEquals(before.table, after.table)
-            for (seat in 0 until SEATS) {
+            for (seat in 0 until before.seats) {
                 assertEquals(before.handOf(seat), after.handOf(seat), "рука места $seat разошлась")
             }
         }

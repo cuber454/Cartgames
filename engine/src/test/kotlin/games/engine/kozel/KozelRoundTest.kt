@@ -167,8 +167,10 @@ class KozelRoundTest {
         // Рука места 0 легче — раунд за ним, и записывает он чужую руку.
         val score = round.score()
         assertEquals(0, score.winner)
-        assertEquals(10, score.points)
-        assertEquals(round.handPoints(1), score.points)
+        // Вышедших нет: пишут оба, каждый по своей руке, а выигравший — тот,
+        // у кого рука легче.
+        assertEquals(listOf(0, 10), score.written)
+        assertEquals(round.handPoints(1), score.written[1])
         assertTrue(score.fish)
     }
 
@@ -184,7 +186,7 @@ class KozelRoundTest {
 
         val score = round.score()
         assertEquals(null, score.winner)
-        assertEquals(0, score.points)
+        assertEquals(listOf(0, 0), score.written)
         assertFalse(round.finished && round.out != null)
     }
 
@@ -201,7 +203,8 @@ class KozelRoundTest {
         assertEquals(0, round.out)
         val score = round.score()
         assertEquals(0, score.winner)
-        assertEquals(3, score.points)
+        // Вышел первым — себе не пишет ничего, а второй считает свою руку.
+        assertEquals(listOf(0, 3), score.written)
         assertFalse(score.fish)
     }
 
@@ -216,7 +219,7 @@ class KozelRoundTest {
 
         assertEquals(25, round.handPoints(1))
         round.apply(0, KozelMove.Place(tile(3, 4), End.LEFT))
-        assertEquals(25, round.score().points)
+        assertEquals(listOf(0, 25), round.score().written)
     }
 
     @Test

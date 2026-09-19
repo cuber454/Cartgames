@@ -7,20 +7,24 @@ import games.engine.tiles.TileSet
 import games.engine.tiles.pipsName
 import kotlin.random.Random
 
-/** Игроков за столом: ты и бот. Игру вчетвером парами оставляем на потом. */
-const val SEATS = 2
+/**
+ * Сколько мест за столом бывает в «Козле»: двое или трое.
+ *
+ * Набор «дубль-шесть» — 28 костей, и он же ставит предел числу мест: по
+ * семь костей на руке — это двадцать восемь на четверых без базара, а без
+ * базара «Козёл» не играется. Игру вчетвером парами оставляем на потом.
+ */
+const val MIN_SEATS = 2
+const val MAX_SEATS = 3
+
+/** Столько мест за столом, если игрок не выбрал другого. */
+const val DEFAULT_SEATS = 2
 
 /**
- * Сколько костей на руке в игре вдвоём. Остальные четырнадцать уходят
- * в базар — именно поэтому вдвоём рука длиннее, чем вчетвером.
+ * Сколько костей на руке — и вдвоём, и втроём. Втроём остальные семь уходят
+ * в базар, и он короче, чем вдвоём: это и есть цена третьего за столом.
  */
 const val HAND_SIZE = 7
-
-/**
- * Сколько пропусков подряд закрывают раунд «рыбой». Двое пропустили —
- * ходить некому: базар пуст, а подходящих костей нет ни у кого.
- */
-const val PASSES_TO_FISH = SEATS
 
 /** Ход в «Козле». */
 sealed interface KozelMove : Move {
@@ -54,12 +58,24 @@ sealed interface KozelMove : Move {
 }
 
 /**
- * Итог раунда: кто записал очки и сколько.
+ * Итог раунда: кто его выиграл и кому сколько записали.
  *
- * [winner] пуст только при ничейной «рыбе» — тогда никто никому ничего не
- * пишет. [fish] говорит, чем раунд кончился: выходом или закрытой линией.
+ * Очки в «Козле» штрафные: пишет тот, кто раунд проиграл, — у кого к концу
+ * раунда остались кости на руке. Вышедший не пишет ничего, а каждый из
+ * оставшихся считает свои (Катерина, 19.09) — поэтому запись идёт по местам,
+ * а не одному проигравшему: за столом на троих проигравших двое.
+ *
+ * [winner] пуст, когда раунд кончился «рыбой» и рука легче всех не одна:
+ * первого места нет, но [written] при этом не все нули — пишут все, у кого
+ * рука тяжелее. [fish] говорит, чем раунд кончился: выходом или закрытой
+ * линией.
  */
-data class RoundScore(val winner: Int?, val points: Int, val fish: Boolean)
+data class RoundScore(
+    val winner: Int?,
+    /** Сколько записано каждому месту: `written[seat]` — его очки за раунд. */
+    val written: List<Int>,
+    val fish: Boolean,
+)
 
 /**
  * Раунд «Козла»: раздача, ходы, закрытый базар, «рыба» и очки.
@@ -95,6 +111,9 @@ class KozelRound private constructor(
 
     /** Чей ход. */
     val turn: Int get() = turnSeat
+
+    /** Сколько мест за столом. Руки есть у каждого — по ним и считаем. */
+    val seats: Int get() = hands.size
 
     /** Кости на руке места [seat]. */
     fun handOf(seat: Int): List<Tile> = hands[seat]
@@ -164,7 +183,7 @@ class KozelRound private constructor(
                     out = seat
                     return
                 }
-                turnSeat = other(seat)
+                turnSeat = next(seat, seats)
             }
 
             is KozelMove.PlaceBoth -> {
@@ -184,7 +203,7 @@ class KozelRound private constructor(
                     out = seat
                     return
                 }
-                turnSeat = other(seat)
+                turnSeat = next(seat, seats)
             }
 
             KozelMove.Draw -> {
@@ -196,11 +215,11 @@ class KozelRound private constructor(
 
             KozelMove.Pass -> {
                 passesCount++
-                if (passesCount >= PASSES_TO_FISH) {
+                if (passesCount >= seats) {
                     fish = true
                     return
                 }
-                turnSeat = other(seat)
+                turnSeat = next(seat, seats)
             }
         }
     }
@@ -229,24 +248,30 @@ class KozelRound private constructor(
     }
 
     /**
-     * Итог раунда. У вышедшего — очки проигравшего; при «рыбе» — очки того,
-     * у кого рука легче, а при равных руках никто не получает ничего.
+     * Итог раунда: вышедший не пишет ничего, каждый из оставшихся — свои.
+     *
+     * При «рыбе» правило то же (KOZEL.md, 2.6 — «одно правило на оба конца
+     * раунда»): не пишет тот, у кого рука легче всех, — она и выиграла, —
+     * а пишут все остальные, каждый по своей руке. Легче всех оказалось у
+     * двоих — первого места нет, и раунд ничейный, но запись остальным это
+     * не отменяет: за столом на троих третий-то свою руку оставил, и она
+     * ему так же в счёт. Вдвоём из этого выходит прежнее: при равных руках
+     * оба легче всех, и не пишет никто (KOZEL.md, 2.5).
      */
     fun score(): RoundScore {
         check(finished) { "раунд ещё идёт" }
 
+        val hands = List(seats) { handPoints(it) }
         out?.let { winner ->
-            val loser = other(winner)
-            return RoundScore(winner, handPoints(loser), fish = false)
+            return RoundScore(winner, List(seats) { if (it == winner) 0 else hands[it] }, fish = false)
         }
 
-        val mine = handPoints(0)
-        val theirs = handPoints(1)
-        return when {
-            mine < theirs -> RoundScore(0, theirs, fish = true)
-            theirs < mine -> RoundScore(1, mine, fish = true)
-            else -> RoundScore(null, 0, fish = true)
-        }
+        val lightest = hands.min()
+        return RoundScore(
+            winner = hands.indices.singleOrNull { hands[it] == lightest },
+            written = List(seats) { if (hands[it] == lightest) 0 else hands[it] },
+            fish = true,
+        )
     }
 
     // --- Озвучка ----------------------------------------------------------
@@ -296,16 +321,19 @@ class KozelRound private constructor(
     companion object {
 
         /**
-         * Новая раздача: набор тасуется, по семь костей каждому, остальные
-         * четырнадцать — закрытый базар. Первым ходит тот, у кого младший
-         * дубль; дублей ни у кого нет — у кого старшая кость по сумме точек.
+         * Новая раздача: набор тасуется, по семь костей каждому, остальное —
+         * закрытый базар. Вдвоём в нём четырнадцать костей, втроём семь.
+         * Первым ходит тот, у кого младший дубль; дублей ни у кого нет — у
+         * кого старшая кость по сумме точек.
          */
         fun deal(
             rules: KozelRules = KozelRules.BOOK,
             random: Random = Random.Default,
+            seats: Int = DEFAULT_SEATS,
         ): KozelRound {
+            require(seats in MIN_SEATS..MAX_SEATS) { "за столом от $MIN_SEATS до $MAX_SEATS мест" }
             val set = TileSet.shuffled(random)
-            val hands = MutableList(SEATS) { mutableListOf<Tile>() }
+            val hands = MutableList(seats) { mutableListOf<Tile>() }
             repeat(HAND_SIZE) { hands.forEach { hand -> hand += set.removeAt(0) } }
             return of(rules, hands, set, opener = openerSeat(hands))
         }
@@ -328,12 +356,14 @@ class KozelRound private constructor(
             turn: Int = opener,
             passes: Int = 0,
         ): KozelRound {
-            require(hands.size == SEATS) { "за столом $SEATS места" }
-            require(opener in 0 until SEATS) { "первым ходит место за столом" }
-            require(turn in 0 until SEATS) { "ходит место за столом" }
+            require(hands.size in MIN_SEATS..MAX_SEATS) {
+                "за столом от $MIN_SEATS до $MAX_SEATS мест"
+            }
+            require(opener in hands.indices) { "первым ходит место за столом" }
+            require(turn in hands.indices) { "ходит место за столом" }
             return KozelRound(
                 rules = rules,
-                hands = MutableList(SEATS) { hands[it].toMutableList() },
+                hands = MutableList(hands.size) { hands[it].toMutableList() },
                 bazaar = bazaar.toMutableList(),
                 line = line,
                 turnSeat = turn,
@@ -341,8 +371,13 @@ class KozelRound private constructor(
             )
         }
 
-        /** Второе место за столом. Игроков двое, поэтому это просто «не он». */
-        fun other(seat: Int): Int = (seat + 1) % SEATS
+        /**
+         * Следующее место за столом — по кругу, вправо от [seat].
+         *
+         * За столом на двоих это «не он»; за столом на троих ход идёт дальше
+         * по кругу, а не возвращается к тому, кто только что сходил.
+         */
+        fun next(seat: Int, seats: Int): Int = (seat + 1) % seats
 
         /**
          * Кто начинает раунд.

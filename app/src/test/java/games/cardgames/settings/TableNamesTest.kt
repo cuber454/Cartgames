@@ -106,8 +106,9 @@ class TableNamesTest {
         )
         assertEquals("Петя", botTitleSecond(settings, GAME_DURAK))
         assertEquals("Вася", botTitleSecond(settings, GAME_THOUSAND))
-        // В «Козле» второго места нет, и имя ему записывать некуда.
-        assertEquals("Второй бот", botTitleSecond(withBotNameSecond(settings, GAME_KOZEL, "Гриша"), GAME_KOZEL))
+        // А «Козёл» зовёт своего: за его стол на троих садится свой второй.
+        assertEquals("Гриша", botTitleSecond(withBotNameSecond(settings, GAME_KOZEL, "Гриша"), GAME_KOZEL))
+        assertEquals("Второй бот", botTitleSecond(withBotNameSecond(Settings(), GAME_DURAK, "Петя"), GAME_KOZEL))
     }
 
     /**
@@ -146,8 +147,7 @@ class TableNamesTest {
 
     /**
      * Число мест у каждой игры своё: выбор за одним столом не переставляет
-     * чужой. «Козёл» пока играется вдвоём, и настройки у него нет вовсе —
-     * там число мест не спрашивают, а знают.
+     * чужой.
      */
     @Test
     fun `число мест у каждой игры своё`() {
@@ -155,5 +155,10 @@ class TableNamesTest {
         assertEquals(3, seatsAtTable(settings, GAME_THOUSAND))
         assertEquals(2, seatsAtTable(settings, GAME_DURAK))
         assertEquals(2, seatsAtTable(Settings(thousandSeats = 3), GAME_KOZEL))
+        // И наоборот: третий за столом «Козла» не сажает третьего в «Дурака».
+        val kozelThree = Settings(kozelSeats = 3)
+        assertEquals(3, seatsAtTable(kozelThree, GAME_KOZEL))
+        assertEquals(2, seatsAtTable(kozelThree, GAME_DURAK))
+        assertEquals(2, seatsAtTable(kozelThree, GAME_THOUSAND))
     }
 }
