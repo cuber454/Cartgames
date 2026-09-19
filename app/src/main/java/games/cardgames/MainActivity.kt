@@ -50,8 +50,10 @@ import games.cardgames.settings.SettingsScreen
 import games.cardgames.settings.loadSettings
 import games.cardgames.settings.saveSettings
 import games.cardgames.speech.Speaker
+import games.cardgames.speech.Speech
 import games.cardgames.speech.sayEvent
 import games.cardgames.speech.speech
+import games.cardgames.speech.speechMs
 import games.cardgames.update.Update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,6 +66,44 @@ import kotlinx.coroutines.withContext
  * пропавшую кнопку будет нечего.
  */
 private const val TREE_DUMP_DELAY_MS = 600L
+
+/**
+ * Что говорят перед системным окном установки.
+ *
+ * Окно чужое: его рисует Андроид, а не игра, и для незрячего игрока это
+ * выглядит так — приложение замолчало и пропало, а на экране что-то есть.
+ * Поэтому сперва слова, потом окно: что это за окно, где на нём кнопка и что
+ * будет дальше (Катерина, 19.09: «на каком системном экране непонятно»).
+ */
+private const val INSTALL_EXPLANATION =
+    "Сейчас откроется системное окно установки — это окно Андроида, поверх игры. " +
+        "Внизу кнопка «Установить», нажми её дважды. Потом телефон спросит подтверждение — согласись."
+
+/** То же окно, но уже после выданного разрешения: объяснять заново нечего. */
+private const val INSTALL_RESUMED =
+    "Разрешение выдано. Открываю системное окно установки: внизу кнопка «Установить»."
+
+/**
+ * Разрешение на установку выдаётся в чужом окне, и это единственный шаг,
+ * который игрок делает там один: дальше приложение доводит установку само.
+ */
+private const val INSTALL_PERMISSION =
+    "Сейчас откроется системный экран разрешения — это окно Андроида, а не игра. " +
+        "Включи на нём «Разрешить установку из этого источника», потом вернись в игру " +
+        "кнопкой «Назад»: дальше я продолжу сам."
+
+/** Как часто спрашивать, выдано ли разрешение, пока игрок в системном окне. */
+private const val PERMISSION_STEP_MS = 1000L
+
+/** Сколько ждать выдачи разрешения, прежде чем оставить это дело игроку. */
+private const val PERMISSION_WAIT_MS = 5 * 60 * 1000L
+
+/**
+ * Запас к оценке речи под скринридером. Свою фразу приложение считает по
+ * [speechMs], а скринридер о конце чтения не сообщает вовсе — и лишняя
+ * секунда тишины тут дешевле оборванного на середине объяснения.
+ */
+private const val READER_TAIL_MS = 1500L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -423,6 +463,10 @@ private fun MenuScreen(
     var fresh by remember { mutableStateOf<Update.Release?>(null) }
     var downloaded by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
+    // Сборка, установку которой мы повели за системным разрешением. Пока она
+    // здесь, приложение ждёт выдачи и потом доводит установку само: возврат из
+    // чужого окна — не тот момент, когда игроку стоит искать кнопку заново.
+    var awaiting by remember { mutableStateOf<Update.Release?>(null) }
 
     val scope = rememberCoroutineScope()
     val view = LocalView.current
@@ -430,16 +474,6 @@ private fun MenuScreen(
     // Фраза об обновлении идёт тем же путём, что и всё остальное на экране:
     // при скринридере её читает он, а не второй голос поверх его чтения.
     fun announce(text: String) = sayEvent(view, speaker, speech, text)
-
-    // Экран открылся или нет — сказать надо в обоих случаях. Молчание про
-    // сбой игрок читает как «нажал, и ничего»: искать причину ему негде.
-    fun locate(shown: Result<Unit>, failPrefix: String, ok: String) {
-        if (shown.isSuccess) {
-            announce(ok)
-        } else {
-            announce("$failPrefix: ${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.")
-        }
-    }
 
     fun startDownload(release: Update.Release) {
         if (downloading) return
@@ -464,28 +498,89 @@ private fun MenuScreen(
         }
     }
 
-    fun install(release: Update.Release) {
+    /**
+     * Сказать фразу и только потом сделать дело: пауза — по длине этой фразы.
+     *
+     * Открыть системное окно сразу нельзя. Окно накрывает игру, и наша фраза —
+     * единственное, что говорит игроку, куда он попал и что там жать; начатое
+     * поверх окна объяснение обрывается на первом слове. Своё время приложение
+     * знает ([speechMs]), а скринридер о конце чтения не сообщает — под ним
+     * держим запас ([READER_TAIL_MS]).
+     */
+    fun sayThen(text: String, then: () -> Unit) {
+        announce(text)
+        val wait = when (speech) {
+            Speech.APP -> speechMs(text, speaker.rate)
+            Speech.READER -> speechMs(text, 1f) + READER_TAIL_MS
+            Speech.NONE -> 0L
+        }
+        scope.launch {
+            delay(wait)
+            then()
+        }
+    }
+
+    /**
+     * Заход к установщику. Сначала объяснение, потом системное окно.
+     *
+     * [resumed] — это продолжение после выданного разрешения: объяснять, что
+     * за окно и что в нём, второй раз незачем, игрок уже слышал.
+     */
+    fun install(release: Update.Release, resumed: Boolean = false) {
         when (val ready = Update.install(context, release)) {
-            is Update.Install.Ready -> {
+            is Update.Install.Ready -> sayThen(if (resumed) INSTALL_RESUMED else INSTALL_EXPLANATION) {
+                Journal.note(
+                    "обновление",
+                    "открываю системное окно установки: ${ready.installer ?: "телефон не сказал, кто откроет"}",
+                )
                 val shown = runCatching { context.startActivity(ready.intent) }
-                locate(shown, "Установщик не открылся", "Открываю установку. Подтверди её на системном экране.")
+                if (shown.isFailure) {
+                    announce(
+                        "Системное окно установки не открылось: " +
+                            "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}. " +
+                            "Пришли журнал — по нему видно, что помешало.",
+                    )
+                }
             }
 
             // Android спрашивает разрешение на установку из этого приложения
             // один раз и на своём экране. Ведём туда сразу — иначе кнопка
-            // выглядела бы сломанной: нажал, и ничего.
-            is Update.Install.NeedsPermission -> {
+            // выглядела бы сломанной: нажал, и ничего. А вернувшись оттуда,
+            // игрок не должен искать кнопку заново: за ним следят ([awaiting]).
+            is Update.Install.NeedsPermission -> sayThen(INSTALL_PERMISSION) {
                 val shown = runCatching { context.startActivity(ready.intent) }
-                locate(
-                    shown,
-                    "Экран разрешения не открылся",
-                    "Разреши установку из этого приложения — откроется системный экран. " +
-                        "Потом нажми «установить обновление» ещё раз.",
-                )
+                if (shown.isSuccess) {
+                    awaiting = release
+                } else {
+                    announce(
+                        "Системный экран разрешения не открылся: " +
+                            "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.",
+                    )
+                }
             }
 
             is Update.Install.Failed -> announce("Установить не вышло: ${ready.reason}.")
         }
+    }
+
+    // Ждём выдачи разрешения и продолжаем сами. Молча: игрок в это время в
+    // чужом окне, и говорить там нечего — слова вернутся вместе с ним.
+    LaunchedEffect(awaiting) {
+        val release = awaiting ?: return@LaunchedEffect
+        var waited = 0L
+        while (waited < PERMISSION_WAIT_MS) {
+            delay(PERMISSION_STEP_MS)
+            waited += PERMISSION_STEP_MS
+            if (Update.canInstall(context)) {
+                awaiting = null
+                install(release, resumed = true)
+                return@LaunchedEffect
+            }
+        }
+        // Разрешение так и не выдали — не молчим об этом: игрок ждёт установки,
+        // а её не будет, и причину надо назвать.
+        awaiting = null
+        announce("Разрешение на установку так и не выдано — обновление не встанет.")
     }
 
     // Проверка — при входе в меню. Файл обновления весит граммы: спрашивать о
