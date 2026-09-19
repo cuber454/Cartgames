@@ -264,8 +264,12 @@ fun ThousandScreen(
      * Приписка про взятку, если ход её закрыл. Одной фразой с самим ходом,
      * а не отдельной: карта и её исход — это одно событие за столом, и
      * слушать их порознь значит ловить две речи вместо одной мысли.
+     *
+     * [speaker] — чей ход закрыл взятку. Свою взятку называют «моя», чужую —
+     * по имени: «Петя берёт взятку» о самом Пете звучало бы как справка
+     * о нём, а не как его собственная речь.
      */
-    fun trickSuffix(round: ThousandRound, tricksBefore: Int): String {
+    fun trickSuffix(round: ThousandRound, tricksBefore: Int, speaker: Int): String {
         val tricks = round.tricksPlayed()
         if (tricks.size <= tricksBefore) return ""
         val trick = tricks.last()
@@ -273,7 +277,11 @@ fun ThousandScreen(
         // игрок выбирает любое (SETTINGS.md, 8). Заодно называется тот, кто
         // взял: на троих соперников двое, и «у соперника» уже непонятно
         // про кого.
-        val who = if (trick.winner == PLAYER) "Взятка твоя" else "Взятку берёт ${names[trick.winner]}"
+        val who = when (trick.winner) {
+            PLAYER -> "Взятка твоя"
+            speaker -> "Взятка моя"
+            else -> "Взятку берёт ${names[trick.winner]}"
+        }
         return " $who, очков ${trick.points}."
     }
 
@@ -360,7 +368,7 @@ fun ThousandScreen(
         if (settings.ownVibration) vibrations.tap()
         round.apply(PLAYER, move)
         val gap = soundGap(move)
-        val trick = trickSuffix(round, tricksBefore)
+        val trick = trickSuffix(round, tricksBefore, speaker = PLAYER)
         voice.sayOwnMove(
             phrase + note + trick,
             afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L,
@@ -480,7 +488,11 @@ fun ThousandScreen(
                 // соперника не заглядывают. Берёт бот прикуп вслепую, как и
                 // игрок, но взятое называют вслух.
                 prikup = (move as? ThousandMove.TakePrikups)?.let { round.prikup(it.index) }.orEmpty(),
-                bot = names[seat],
+                // За столом на двоих соперник один, и имени у него нет: он
+                // говорит о себе «я». Имя существует, чтобы различать двоих,
+                // а названное без нужды звучит объявлением, а не речью
+                // («Петя называет 120» вместо «называю 120») — Катерина, 19.09.
+                bot = if (round.playerCount >= 3) names[seat] else null,
                 receivers = discardReceivers(round, seat, move, names),
             )
             round.apply(seat, move)
@@ -489,7 +501,7 @@ fun ThousandScreen(
             // боту ждать незачем.
             val gap = soundGap(move)
             if (settings.botTalk && gap > 0) delay(gap + PHRASE_GAP_MS)
-            sayBot(seat, phrase + trickSuffix(round, tricksBefore))
+            sayBot(seat, phrase + trickSuffix(round, tricksBefore, speaker = seat))
             // Пишем после каждого хода: если приложение прибьют посреди
             // серии ходов бота, партия не откатится к её началу.
             session.persist()
@@ -1071,7 +1083,7 @@ fun ThousandScreen(
 
 /**
  * Ход бота вслух. Коротко: за столом не комментируют каждую карту, её
- * называют — и всё. Торг, прикуп и снос названы по имени, потому что это
+ * называют — и всё. Торг, прикуп и снос названы словами, потому что это
  * не карты, а решения, и о них иначе не догадаться.
  *
  * Прикуп — исключение из краткости: [prikup] называет карты, которые бот
@@ -1080,8 +1092,13 @@ fun ThousandScreen(
  *
  * [bot] — имя того, чей это ход. На троих соперников двое, и фразу говорит
  * тот из них, кто ходит: «Петя называет 120» — про Петю, а не про
- * «соперника» вообще. [receivers] — кому достаются карты сноса, по одной
- * каждому: без них на троих не понять, какая карта ушла кому.
+ * «соперника» вообще. На двоих соперник один, и имени нет вовсе ([bot] ==
+ * null): он говорит о себе «я». Так и говорят за столом — имя нужно, чтобы
+ * различить двоих; названное без нужды, оно звучит объявлением («бот Петя
+ * называет 120») вместо речи.
+ *
+ * [receivers] — кому достаются карты сноса, по одной каждому: без них на
+ * троих не понять, какая карта ушла кому.
  *
  * Все здешние фразы — в настоящем времени, и это не
  * стиль, а условие: прошедшее время требует рода («Меркурий снёс», но «Соня
@@ -1091,31 +1108,51 @@ fun ThousandScreen(
 private fun botPhrase(
     move: ThousandMove,
     prikup: List<EngineCard> = emptyList(),
-    bot: String = "Бот",
+    bot: String? = null,
     receivers: List<String> = emptyList(),
-): String = when (move) {
-    is ThousandMove.Bid -> "$bot называет ${move.amount}."
-    ThousandMove.Pass -> "$bot пасует."
-    is ThousandMove.TakePrikups ->
-        if (prikup.isEmpty()) "$bot берёт прикуп."
-        else "$bot берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}."
-    // Снос уходит в закрытую, по одной карте каждому сопернику, и в чужой
-    // руке эту карту потом не увидеть: не назовём сейчас — игрок найдёт её
-    // только перебором руки. Кому какая досталась, называем по имени: на
-    // троих карт две, и без имени непонятно, какая ушла кому.
-    is ThousandMove.Discard ->
-        if (receivers.size == move.cards.size) {
-            "$bot сносит: " + move.cards.mapIndexed { index, card ->
-                "${receivers[index]} ${card.spoken()}"
-            }.joinToString(", ") + "."
-        } else {
-            "$bot сносит карту: тебе ${move.cards.joinToString(", ") { it.spoken() }}."
-        }
+): String {
+    // Третье лицо для двоих соперников и первое — для одного. Пара пишется
+    // целиком: русский глагол в первом и третьем лице разный («называю» /
+    // «называет»), и одной формой тут не обойтись.
+    fun say(self: String, named: String): String = if (bot == null) self else "$bot $named"
 
-    is ThousandMove.Praise -> "$bot хвалит ${move.card.suit.title}. Козырь — ${move.card.suit.title}."
-    ThousandMove.Golden -> "$bot объявляет золотой кон: заказ 120, очки двойные."
-    ThousandMove.Raspis -> "$bot расписывается."
-    is ThousandMove.Play -> "$bot кладёт ${move.card.spoken()}."
+    return when (move) {
+        is ThousandMove.Bid -> say("Называю ${move.amount}.", "называет ${move.amount}.")
+        ThousandMove.Pass -> say("Пасую.", "пасует.")
+        is ThousandMove.TakePrikups ->
+            if (prikup.isEmpty()) say("Беру прикуп.", "берёт прикуп.")
+            else say(
+                "Беру прикуп: ${prikup.joinToString(", ") { it.spoken() }}.",
+                "берёт прикуп: ${prikup.joinToString(", ") { it.spoken() }}.",
+            )
+
+        // Снос уходит в закрытую, по одной карте каждому сопернику, и в чужой
+        // руке эту карту потом не увидеть: не назовём сейчас — игрок найдёт её
+        // только перебором руки. Кому какая досталась, называем по имени: на
+        // троих карт две, и без имени непонятно, какая ушла кому. Соперник
+        // один — получатель всегда игрок, и живой человек сказал бы коротко,
+        // «сношу тебе семёрку крести», а не «сношу: ты получаешь семёрку».
+        is ThousandMove.Discard ->
+            when {
+                bot == null && move.cards.size == 1 ->
+                    "Сношу тебе ${move.cards.first().spokenAccusative()}."
+                receivers.size == move.cards.size -> say(
+                    "Сношу: ${receivers.joinToString(", ")}.",
+                    "сносит: ${receivers.joinToString(", ")}.",
+                )
+                else -> say("Сношу карту.", "сносит карту.")
+            }
+
+        is ThousandMove.Praise ->
+            say(
+                "Хвалю ${move.card.suit.title}. Козырь — ${move.card.suit.title}.",
+                "хвалит ${move.card.suit.title}. Козырь — ${move.card.suit.title}.",
+            )
+        ThousandMove.Golden ->
+            say("Объявляю золотой кон: заказ 120, очки двойные.", "объявляет золотой кон: заказ 120, очки двойные.")
+        ThousandMove.Raspis -> say("Расписываюсь.", "расписывается.")
+        is ThousandMove.Play -> say("Кладу ${move.card.spoken()}.", "кладёт ${move.card.spoken()}.")
+    }
 }
 
 /** Свой ход — вслух. Не «сыграна карта», а живая речь, короткая. */
@@ -1133,9 +1170,7 @@ private fun ownPhrase(
     // две карты двум разным людям, и кому какая — игрок иначе не узнает.
     is ThousandMove.Discard ->
         if (receivers.size == move.cards.size) {
-            "Сносишь: " + move.cards.mapIndexed { index, card ->
-                "${receivers[index]} ${card.spoken()}"
-            }.joinToString(", ") + "."
+            "Сносишь: ${receivers.joinToString(", ")}."
         } else {
             "Сносишь ${move.cards.joinToString(", ") { it.spoken() }}."
         }
@@ -1151,14 +1186,18 @@ private fun ownPhrase(
 }
 
 /**
- * Кому достаются карты сноса — «кто получает», по одной на карту: по одной
- * каждому следующему за столом, так же, как их раздаёт движок (partiesTo).
- * Имя получателя нужно на троих: карт в сносе две, и без имени непонятно,
- * какая ушла кому.
+ * Кому достаются карты сноса — «кто что получает», по одной на карту: по
+ * одной каждому следующему за столом, так же, как их раздаёт движок
+ * (partiesTo). Имя получателя нужно на троих: карт в сносе две, и без имени
+ * непонятно, какая ушла кому.
  *
  * Глагол идёт вместе с именем, а не отдельно: получателем бывает и игрок, а
  * «ты получает» — ошибка, которую слышно. Форма глагола зависит от места, и
  * место здесь известно.
+ *
+ * Карта названа винительным («получаешь семёрку крести», не «семёрка
+ * крести»): она тут дополнение к «получаешь», и именительный в этой роли
+ * слышен как обрывок чужой фразы.
  */
 private fun discardReceivers(
     round: ThousandRound,
@@ -1170,7 +1209,8 @@ private fun discardReceivers(
 } else {
     move.cards.indices.map { step ->
         val to = (seat + step + 1) % round.playerCount
-        if (to == PLAYER) "ты получаешь" else "${names[to]} получает"
+        val card = move.cards[step].spokenAccusative()
+        if (to == PLAYER) "ты получаешь $card" else "${names[to]} получает $card"
     }
 }
 

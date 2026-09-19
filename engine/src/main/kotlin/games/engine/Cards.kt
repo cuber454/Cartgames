@@ -22,18 +22,24 @@ enum class Suit(val title: String, val spoken: String, val sign: String) {
 
 /**
  * Достоинство. [value] — для сравнения карт, [spoken] — для озвучки,
- * [sign] — короткая надпись на нарисованной карте.
+ * [sign] — короткая надпись на нарисованной карте, [accusative] — то же
+ * название винительным падежом.
+ *
+ * Падеж нужен там, где карта стоит дополнением: «ты получаешь семёрку
+ * крести». Склонять название программно нечем — форм всего девять, и они
+ * выписаны здесь, рядом с именительными: так их видно все разом, и опечатка
+ * в одной не спрячется.
  */
-enum class Rank(val value: Int, val spoken: String, val sign: String) {
-    SIX(6, "шестёрка", "6"),
-    SEVEN(7, "семёрка", "7"),
-    EIGHT(8, "восьмёрка", "8"),
-    NINE(9, "девятка", "9"),
-    TEN(10, "десятка", "10"),
-    JACK(11, "валет", "В"),
-    QUEEN(12, "дама", "Д"),
-    KING(13, "король", "К"),
-    ACE(14, "туз", "Т"),
+enum class Rank(val value: Int, val spoken: String, val sign: String, val accusative: String) {
+    SIX(6, "шестёрка", "6", "шестёрку"),
+    SEVEN(7, "семёрка", "7", "семёрку"),
+    EIGHT(8, "восьмёрка", "8", "восьмёрку"),
+    NINE(9, "девятка", "9", "девятку"),
+    TEN(10, "десятка", "10", "десятку"),
+    JACK(11, "валет", "В", "валета"),
+    QUEEN(12, "дама", "Д", "даму"),
+    KING(13, "король", "К", "короля"),
+    ACE(14, "туз", "Т", "туза"),
 }
 
 /**
@@ -43,6 +49,14 @@ enum class Rank(val value: Int, val spoken: String, val sign: String) {
  */
 data class Card(val rank: Rank, val suit: Suit) {
     fun spoken(): String = "${rank.spoken} ${suit.spoken}"
+
+    /**
+     * Карта как дополнение: «семёрку крести», «туза пик».
+     *
+     * Масть стоит в родительном падеже и не меняется — «крести», «пик», —
+     * меняется одно достоинство.
+     */
+    fun spokenAccusative(): String = "${rank.accusative} ${suit.spoken}"
 
     override fun toString(): String = spoken()
 }
