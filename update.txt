@@ -1,0 +1,7 @@
+# Описание последней сборки. Читает его приложение (app/.../update/Update.kt).
+versionCode=122
+versionName=0.9
+build=0.9.122
+apkUrl=https://github.com/cuber454/Cartgames/releases/download/v0.9.122/cartgames-0.9.122.apk
+sha256=262ce26e1a8b270a28eeafdce8b0dffd685ae278aca29a313845f87ad84a6c63
+notes=Обновление: запуск установщика переживает уход с экрана (#44) 
