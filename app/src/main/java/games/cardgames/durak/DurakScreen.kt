@@ -1,5 +1,6 @@
 package games.cardgames.durak
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +55,7 @@ import games.cardgames.speech.TURN_PHRASE
 import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.verdictOf
 import games.cardgames.speech.sayEvent
+import games.cardgames.speech.withoutTurn
 import games.cardgames.ui.HandCard
 import games.cardgames.ui.TableBattles
 import games.cardgames.ui.TableGesture
@@ -517,7 +520,14 @@ fun DurakScreen(
                     TableBattles(game.table, cardWidth = tableWidth, cardHeight = tableHeight)
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(session.lastPhrase, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                // Без слов о том, чей ход: они уже стоят в строке состояния
+                // выше, и повторять их дважды незачем — а сказанное вслух
+                // «Твой ход» несёт переход, и его повторяет «Повтори».
+                Text(
+                    withoutTurn(session.lastPhrase),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                )
             }
             TextButton(
                 onClick = { menuOpen = true },
@@ -529,10 +539,22 @@ fun DurakScreen(
 
         // --- Середина: рука сеткой, скроллится только она -----------------
 
-        Box(modifier = Modifier.weight(1f)) {
+        // Рука лежит на своём фоне, а стол остаётся голым: глазу видно, где
+        // кончается стол и начинаются твои карты, и одно от другого не
+        // сливается. Порядка и голоса это не трогает — только вид.
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                ),
+        ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -542,7 +564,6 @@ fun DurakScreen(
                         playable = verdictOf(card, playable),
                         cardWidth = cardWidth,
                         cardHeight = cardHeight,
-                        largeText = settings.largeText,
                         selected = cursor == index,
                         onClick = { playCard(card) },
                     )

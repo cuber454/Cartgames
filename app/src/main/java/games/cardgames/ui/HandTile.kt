@@ -2,32 +2,37 @@ package games.cardgames.ui
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.speech.spokenVerdict
 import games.engine.tiles.Tile
 
 /**
- * Кость на руке: рисунок и подпись под ним — то же, что [HandCard] у карт,
+ * Кость на руке: рисунок и имя для скринридера — то же, что [HandCard] у карт,
  * и по тем же причинам.
  *
- * Подпись даёт скринридеру текст, а картинка молчит (у неё своя пустая
- * семантика), поэтому кость читается один раз и словами. Чем сейчас нельзя
- * сходить — приглушено и помечено словом: цветом сыт не будешь, если играешь
- * на слух. Слова вердикта общие с картами — их даёт [spokenVerdict].
+ * Подписи под костью больше нет: имя кости ушло в описание ([contentDescription]),
+ * и наружу при этом ничего не потерялось. Кость — картинка, и она молчит (у неё
+ * своя пустая семантика); слова — единственное, что делает её слышимой, — читает
+ * та же строка, что и раньше, только теперь она не занимает места на экране.
+ * Чем сейчас нельзя сходить — по-прежнему приглушено и сказано словом: цветом
+ * сыт не будешь, если играешь на слух. Слова вердикта общие с картами — их даёт
+ * [spokenVerdict].
+ *
+ * Имя кладём внутрь плитки, а не на неё снаружи: имя, положенное снаружи, до
+ * нажимаемой плитки не доходит, и скринридер читает «без метки» — те же грабли,
+ * что были на кнопках «Что можно» и «Повтори».
  *
  * [selected] — кость, до которой игрок дошёл жестом и которую сейчас слышит.
  *
@@ -41,7 +46,6 @@ fun HandTile(
     playable: Boolean?,
     tileWidth: Dp,
     tileHeight: Dp,
-    largeText: Boolean,
     selected: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -65,21 +69,13 @@ fun HandTile(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(6.dp),
+                .padding(6.dp)
+                .clearAndSetSemantics {
+                    contentDescription = tile.spoken() + spokenVerdict(playable)
+                },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             TileFace(tile, width = tileWidth, height = tileHeight)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = tile.spoken() + spokenVerdict(playable),
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                style = if (largeText) {
-                    MaterialTheme.typography.bodyMedium
-                } else {
-                    MaterialTheme.typography.bodySmall
-                },
-            )
         }
     }
 }

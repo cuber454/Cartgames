@@ -2,33 +2,40 @@ package games.cardgames.ui
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.speech.spokenVerdict
 import games.engine.Card as EngineCard
 
 /**
- * Карта на руке: рисунок и подпись под ним.
+ * Карта на руке: рисунок и имя для скринридера.
  *
- * Чем сейчас нельзя сыграть — приглушено. Подпись даёт скринридеру текст,
- * а картинка молчит (у неё своя пустая семантика), поэтому карта читается
- * один раз и словами.
+ * Чем сейчас нельзя сыграть — приглушено, и об этом же говорит слово в имени
+ * карты ([spokenVerdict]). Картинка молчит (у неё своя пустая семантика),
+ * поэтому карта читается один раз и словами.
  *
- * Общая на обе игры: подпись «не подходит» — это не оформление, а то, ради
- * чего карта вообще подписана. Разойтись по двум экранам она не должна.
+ * Подписи под картой больше нет: имя ушло в описание ([contentDescription]),
+ * и видно его теперь не на экране, а на слух (Катерина, 19.09). Слово «не
+ * подходит» при этом остаётся тем, ради чего карта вообще названа: без него
+ * приглушённая карта молчала бы о том, что жать её нечем.
+ *
+ * Имя кладём внутрь карты, а не на неё снаружи: имя, положенное снаружи, до
+ * нажимаемой карты не доходит, и скринридер читает «без метки» — те же грабли,
+ * что были на кнопках «Что можно» и «Повтори».
+ *
+ * Общая на все игры: имя карты — это не оформление, а то, ради чего карта
+ * вообще подписана. Разойтись по экранам оно не должно.
  *
  * [selected] — карта, до которой игрок дошёл жестом и которую сейчас
  * слышит. Отмечена рамкой, а не только голосом: карту называет речь, но
@@ -46,7 +53,6 @@ fun HandCard(
     playable: Boolean?,
     cardWidth: Dp,
     cardHeight: Dp,
-    largeText: Boolean,
     selected: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -70,25 +76,13 @@ fun HandCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(6.dp),
+                .padding(6.dp)
+                .clearAndSetSemantics {
+                    contentDescription = card.spoken() + spokenVerdict(playable)
+                },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             CardFace(card, width = cardWidth, height = cardHeight)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                // Неиграбельную карту помечаем словами, а не только
-                // бледным цветом: цветом сыт не будешь, если играешь
-                // на слух, а так понятно, что жать нечего. Слова те же,
-                // что и на свайпе по руке — их даёт [spokenVerdict].
-                text = card.spoken() + spokenVerdict(playable),
-                textAlign = TextAlign.Center,
-                maxLines = 3,
-                style = if (largeText) {
-                    MaterialTheme.typography.bodyMedium
-                } else {
-                    MaterialTheme.typography.bodySmall
-                },
-            )
         }
     }
 }
