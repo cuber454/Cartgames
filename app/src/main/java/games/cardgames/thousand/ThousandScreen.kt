@@ -39,11 +39,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.settings.GameSettingStore
 import games.cardgames.settings.botEngine
+import games.cardgames.settings.botSpeaksAlone
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
 import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
+import games.cardgames.speech.BotVoice
 import games.cardgames.speech.FIRST_BOT_SEAT
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
@@ -182,6 +184,24 @@ fun ThousandScreen(
             )
         }
     }
+    // Слышен ли соперник отдельно от приложения: выбран свой синтезатор или
+    // свой голос. Такой говорит ими и при работающем скринридере — тот
+    // озвучивает приложение, а соперник говорит своим голосом. За скринридером
+    // остаётся только тот, кому ничего своего не выбрали: голос у него тот же,
+    // что у приложения, и своя озвучка там означала бы включившуюся
+    // самоозвучку (SETTINGS.md, 8).
+    val botApart = botSpeaksAlone(
+        settings.botVoiceThousand,
+        settings.voice,
+        settings.botEngineThousand,
+        settings.engine,
+    )
+    val botSecondApart = botSpeaksAlone(
+        settings.botVoiceThousandSecond,
+        settings.voice,
+        settings.botEngineThousandSecond,
+        settings.engine,
+    )
     val sounds = remember { TableSounds(context) }
     val vibrations = remember { Vibrations(context) }
     // Гасим каждый синтезатор порознь: второй заводится и пропадает вместе с
@@ -227,12 +247,12 @@ fun ThousandScreen(
     // скринридером и запись фразы для «Повтори» живут там, одни на обе игры.
     val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
-    val voice = remember(speaker, botSpeaker, botSpeakerSecond) {
+    val voice = remember(speaker, botSpeaker, botSpeakerSecond, botApart, botSecondApart) {
         TableVoice(
             speaker = speaker,
             botSpeakers = buildMap {
-                put(FIRST_BOT_SEAT, botSpeaker)
-                botSpeakerSecond?.let { put(SECOND_BOT, it) }
+                put(FIRST_BOT_SEAT, BotVoice(botSpeaker, botApart))
+                botSpeakerSecond?.let { put(SECOND_BOT, BotVoice(it, botSecondApart)) }
             },
             view = view,
             speech = { speechNow.value },
@@ -267,13 +287,19 @@ fun ThousandScreen(
      * семёрка, и кто из них говорит, на слух не понять. Своя карта — своя
      * речь, и говорит её тот, кому карта ушла, своим голосом.
      *
-     * Скринридеру снос по-прежнему называют одной фразой: голос у него один
-     * на всех, и три реплики подряд он прочитает тем же голосом — только
-     * длиннее. Выключенные реплики соперника — тоже одна фраза: молчащий бот
-     * не заговорит и о полученной карте (Катерина, 19.09).
+     * Раскладываем, только если каждого получателя слышно отдельно — своим
+     * голосом или своим синтезатором (см. [games.cardgames.speech.BotVoice.apart]).
+     * Скринридеру снос по-прежнему называют одной фразой: голос у него один на
+     * всех, и три реплики подряд он прочитает тем же голосом — только длиннее.
+     * Заодно снос не раскладывается, когда реплики соперника выключены:
+     * молчащий бот не заговорит и о полученной карте (Катерина, 19.09).
      */
-    fun splitDiscard(move: ThousandMove): Boolean =
-        settings.botTalk && voice.appSpeaks() && move is ThousandMove.Discard && move.cards.size > 1
+    fun splitDiscard(seat: Int, move: ThousandMove, round: ThousandRound): Boolean {
+        if (!settings.botTalk) return false
+        if (move !is ThousandMove.Discard || move.cards.size < 2) return false
+        // Своя карта игрока говорит «получаешь» — её всегда понятно, чья.
+        return discardTargets(round, seat, move).all { (to, _) -> to == PLAYER || voice.speaksAlone(to) }
+    }
 
     /**
      * Снос по получателям: каждый говорит о своей карте сам.
@@ -331,7 +357,7 @@ fun ThousandScreen(
      *
      * [named] — фразу читает скринридер, а не сам бот: у него один голос на
      * всех, и «взятка моя» в его устах не говорит, чья она. Тогда и о своей
-     * взятке бот говорит по имени, как о чужой (см. [TableVoice.appSpeaks]).
+     * взятке бот говорит по имени, как о чужой (см. [TableVoice.speaksAlone]).
      */
     fun trickSuffix(round: ThousandRound, tricksBefore: Int, speaker: Int, named: Boolean = false): String {
         val tricks = round.tricksPlayed()
@@ -426,7 +452,7 @@ fun ThousandScreen(
         // Снос на троих разложен по получателям: своя фраза называет только
         // снесённые карты, а о том, кому какая ушла, скажет сам получатель
         // (см. [sayDiscardReceivers]).
-        val split = splitDiscard(move)
+        val split = splitDiscard(PLAYER, move, round)
         val phrase = ownPhrase(
             move,
             prikup = taken?.let { round.prikup(it.index) }.orEmpty(),
@@ -561,7 +587,7 @@ fun ThousandScreen(
             val move = ThousandBot.chooseMove(round, seat, settings.botDifficultyThousand, rng) ?: break
             val tricksBefore = round.tricksPlayed().size
             soundFor(move)
-            val split = splitDiscard(move)
+            val split = splitDiscard(seat, move, round)
             // Говорит ли бот о себе по имени. Имя нужно только там, где фразу
             // читает скринридер, и только на троих: у него один голос на всех,
             // и «называет 120» без имени не говорит, кто называет. Своим
@@ -569,7 +595,7 @@ fun ThousandScreen(
             // голоса, а не имя. За столом на двоих соперник один и различать
             // нечего: там бот не называет себя даже под скринридером
             // (Катерина, 19.09).
-            val named = round.playerCount >= 3 && !voice.appSpeaks()
+            val named = round.playerCount >= 3 && !voice.speaksAlone(seat)
             val phrase = botPhrase(
                 move,
                 // Взятый прикуп открывают обоим — иначе игрок так и не узнает,

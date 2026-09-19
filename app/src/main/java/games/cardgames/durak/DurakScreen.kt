@@ -42,11 +42,13 @@ import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.saveScore
 import games.cardgames.settings.botEngine
+import games.cardgames.settings.botSpeaksAlone
 import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
+import games.cardgames.speech.BotVoice
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
@@ -143,6 +145,15 @@ fun DurakScreen(
             ),
         )
     }
+    // Бот со своим синтезатором или своим голосом говорит им и при работающем
+    // скринридере: тот озвучивает приложение, а соперник — своим голосом
+    // (SETTINGS.md, 8).
+    val botApart = botSpeaksAlone(
+        settings.botVoiceDurak,
+        settings.voice,
+        settings.botEngineDurak,
+        settings.engine,
+    )
     val sounds = remember { TableSounds(context) }
     val vibrations = remember { Vibrations(context) }
     DisposableEffect(speaker, botSpeaker) {
@@ -189,10 +200,10 @@ fun DurakScreen(
     // (скринридер включают посреди партии, скорость крутят в настройках).
     val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
-    val voice = remember(speaker, botSpeaker) {
+    val voice = remember(speaker, botSpeaker, botApart) {
         TableVoice(
             speaker = speaker,
-            botSpeakers = mapOf(BOT to botSpeaker),
+            botSpeakers = mapOf(BOT to BotVoice(botSpeaker, botApart)),
             view = view,
             speech = { speechNow.value },
             rate = { rateNow.value },

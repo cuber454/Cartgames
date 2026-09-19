@@ -1,7 +1,9 @@
 package games.cardgames.settings
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -73,5 +75,27 @@ class BotEngineTest {
     @Test
     fun `системный у обоих — это один и тот же синтезатор`() {
         assertEquals("ru-ru-x-ruf-local", botVoice(null, "ru-ru-x-ruf-local", "", null))
+    }
+
+    /**
+     * Слышно ли бота отдельно от приложения — по этому решается, отдавать ли
+     * его фразу скринридеру: тот говорит одним голосом на всё, и отданная ему
+     * реплика звучит голосом приложения. Бот со своим голосом говорит сам и
+     * при работающем скринридере.
+     */
+    @Test
+    fun `свой голос или синтезатор — бота слышно отдельно`() {
+        // Ничего своего: движок общий, голос тот же — отличить его от
+        // приложения нечем, и звучать он должен как приложение.
+        assertFalse(botSpeaksAlone(null, "ru-ru-x-ruf-local", null, "com.google.android.tts"))
+        assertFalse(botSpeaksAlone(null, "ru-ru-x-ruf-local", "", null))
+
+        // Свой голос того же движка — уже своя речь.
+        assertTrue(botSpeaksAlone("ru-ru-x-ruf-network", "ru-ru-x-ruf-local", null, "com.google.android.tts"))
+        // Свой движок, даже если голос приложения боту и достался бы.
+        assertTrue(botSpeaksAlone(null, "ru-ru-x-ruf-local", "com.samsung.tts", "com.google.android.tts"))
+        // Тот же самый голос, выбранный боту руками, — не своя речь: звучит
+        // он ровно так же, как у приложения.
+        assertFalse(botSpeaksAlone("ru-ru-x-ruf-local", "ru-ru-x-ruf-local", null, "com.google.android.tts"))
     }
 }
