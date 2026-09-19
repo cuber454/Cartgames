@@ -279,6 +279,7 @@ fun KozelScreen(
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
+            pauseMs = { settings.phrasePauseMs.toLong() },
             remember = { session.lastPhrase = it },
         )
     }

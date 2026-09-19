@@ -482,6 +482,41 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         sayEvent(view, speaker, speech, text)
     }
 
+    /**
+     * Сколько звучит эта фраза тому, кто говорит сейчас.
+     *
+     * Своё время приложение знает ([speechMs]), а скринридер о конце чтения не
+     * сообщает — под ним держим запас ([READER_TAIL_MS]). При «никто» не
+     * звучит ничего, и ждать нечего.
+     */
+    fun spokenMs(text: String): Long = when (speech) {
+        Speech.APP -> speechMs(text, speaker.rate)
+        Speech.READER -> speechMs(text, 1f) + READER_TAIL_MS
+        Speech.NONE -> 0L
+    }
+
+    /**
+     * Проба паузы между репликами: две реплики за столом подряд, с той самой
+     * тишиной между ними.
+     *
+     * Ступень называют словами и тут же дают услышать: «2000» человеку ни о
+     * чём не говорит, а пауза — это разборчивость, и подбирают её на слух.
+     * Реплики для образца короткие, как за столом: на них тишина слышна
+     * отчётливее всего.
+     */
+    fun previewPause(ms: Int) {
+        val lead = "Пауза между репликами: ${phrasePauseTitle(ms)}."
+        val first = "Держи, семь пик."
+        val second = "Бью козырем."
+        announce(lead)
+        scope.launch {
+            delay(spokenMs(lead))
+            announce(first)
+            delay(spokenMs(first) + ms)
+            announce(second)
+        }
+    }
+
     // --- Обновление: скачать и поставить ---------------------------------
     //
     // Обновление живёт здесь, а не на первом экране: там теперь только игры.
@@ -532,11 +567,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      */
     fun sayThen(text: String, then: () -> Unit) {
         announce(text)
-        val wait = when (speech) {
-            Speech.APP -> speechMs(text, speaker.rate)
-            Speech.READER -> speechMs(text, 1f) + READER_TAIL_MS
-            Speech.NONE -> 0L
-        }
+        val wait = spokenMs(text)
         // Сколько ждать окна — в журнал: по этой строке видно, когда его
         // спрашивать, если игрок скажет, что окна не было.
         Journal.note("обновление", "системное окно — через $wait мс")
@@ -1064,6 +1095,17 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             SettingSwitch("Реплики соперника", settings.botTalk) { value ->
                 save(settings.copy(botTalk = value))
                 announce(if (value) "Реплики соперника включены." else "Реплики соперника выключены.")
+            }
+
+            // Пауза между репликами — рядом с репликами соперника: она про них
+            // и про всё, что за столом говорят подряд. Кнопкой по кругу, а не
+            // ползунком, и по той же причине, что и скорость: ступеней мало, а
+            // ползунок незрячему неудобен. Выбор сразу и звучит — услышать надо
+            // ровно то, что будет за столом.
+            SettingButton("Пауза между репликами: ${phrasePauseTitle(settings.phrasePauseMs)}") {
+                val next = nextPhrasePause(settings.phrasePauseMs)
+                save(settings.copy(phrasePauseMs = next))
+                previewPause(next)
             }
 
             Spacer(Modifier.height(16.dp))

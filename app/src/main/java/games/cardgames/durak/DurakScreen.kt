@@ -270,6 +270,7 @@ fun DurakScreen(
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
+            pauseMs = { settings.phrasePauseMs.toLong() },
             remember = { session.lastPhrase = it },
         )
     }
@@ -424,6 +425,13 @@ fun DurakScreen(
             if (settings.vibration) vibrations.tap()
             if (settings.signals) sounds.turn()
         }
+        // Дослушиваем бота, прежде чем сказать своё: и итог партии, и сведение
+        // стола, и «твой ход» — это фразы поверх его реплики, а поверх неё
+        // слышно одно последнее слово. В «Тысяче» и «Козле» эта пауза стоит с
+        // самого начала, а в «Дураке» её не было — «На столе…» накрывало
+        // последнее слово бота, и это ровно та каша, из-за которой не понять,
+        // кто что сказал.
+        if (played) delay(voice.waitMs())
         finishIfOver()
         // Стол перед твоим ходом: что лежит и что из этого отбито. Реплики
         // бота называют карты по одной, и по одной они складываются в
