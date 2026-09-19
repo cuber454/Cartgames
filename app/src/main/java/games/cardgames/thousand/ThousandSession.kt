@@ -10,6 +10,7 @@ import games.cardgames.durak.clearGame
 import games.cardgames.durak.loadGameText
 import games.cardgames.durak.saveGame
 import games.cardgames.settings.loadSettings
+import games.cardgames.settings.seatsAtTable
 import games.engine.thousand.Phase
 import games.engine.thousand.RoundSummary
 import games.engine.thousand.ThousandMatch
@@ -17,10 +18,18 @@ import games.engine.thousand.ThousandRound
 import games.engine.thousand.ThousandSave
 
 /**
- * В «Тысячу» играют двое. Тройка в движке есть — она за столом на троих,
- * а стол в приложении пока один, и мешать две игры на одном экране незачем.
+ * За каким столом садиться в новую партию — из настроек.
+ *
+ * Число мест выбирает игрок: вдвоём торг идёт один на один, втроём — как за
+ * обычным столом, и прикуп берёт один из трёх. Движок держит оба стола
+ * (прикуп 2+2 на двоих и 1+3 на троих), поэтому здесь только выбор.
+ *
+ * В самой партии число мест уже записано, и поднятая с диска партия
+ * продолжается за своим столом, а не за тем, что стоит в настройках сейчас:
+ * иначе смена настройки посреди партии пересдала бы её на другое число
+ * игроков (ThousandSave, строка «players»).
  */
-const val THOUSAND_PLAYERS = 2
+private fun seatsForNewMatch(context: Context): Int = seatsAtTable(loadSettings(context))
 
 /**
  * Партия в «Тысячу», переживающая уход с экрана и перезапуск приложения.
@@ -42,7 +51,9 @@ class ThousandSession(context: Context) {
 
     // Договорённости берутся здесь, на новую партию, и дальше живут в самом
     // матче: переключение настройки посреди партии её не меняет.
-    var match by mutableStateOf(ThousandMatch(THOUSAND_PLAYERS, rules = loadThousandRules(appContext)))
+    var match by mutableStateOf(
+        ThousandMatch(seatsForNewMatch(appContext), rules = loadThousandRules(appContext)),
+    )
         private set
 
     var round by mutableStateOf(match.startRound())
@@ -122,7 +133,7 @@ class ThousandSession(context: Context) {
      * или сказать «продолжаем», — здесь для этого нет ни голоса, ни настроек.
      */
     fun restart() {
-        match = ThousandMatch(THOUSAND_PLAYERS, rules = loadThousandRules(appContext))
+        match = ThousandMatch(seatsForNewMatch(appContext), rules = loadThousandRules(appContext))
         round = match.startRound()
         recorded = false
         summary = null
