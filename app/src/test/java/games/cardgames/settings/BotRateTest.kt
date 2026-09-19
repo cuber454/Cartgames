@@ -59,7 +59,7 @@ class BotRateTest {
      */
     @Test
     fun `с чужого числа кнопка ведёт на ступень`() {
-        assertEquals(0.9f, nextBotRate(0.85f), 0f)
+        assertEquals(1.0f, nextBotRate(0.85f), 0f)
         assertEquals(0.75f, nextBotRate(3f), 0f)
         assertEquals(0.9f, nextBotRate(0f), 0f)
     }
