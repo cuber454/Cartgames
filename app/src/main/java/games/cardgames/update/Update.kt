@@ -13,6 +13,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.UnknownHostException
 import java.security.MessageDigest
 
 /**
@@ -216,20 +217,35 @@ object Update {
      * Спросить, что вышло, — по дорогам по очереди. Ходит в сеть: звать не с
      * главного потока.
      *
-     * Игроку при неудаче говорим коротко («ни одна дорога не ответила»), а
-     * какая дорога и на чём споткнулась — в журнал: вслух это лента, которую не
-     * удержать, а в журнале её видно построчно и есть что показать.
+     * Игроку при неудаче говорим коротко, а какая дорога и на чём споткнулась —
+     * в журнал: вслух это лента, которую не удержать, а в журнале её видно
+     * построчно и есть что показать.
+     *
+     * Отдельная беда — когда ни одно имя не разрешается. Это не «сервер
+     * молчит», и починить это в приложении нечем: имена ищет система. 19.09
+     * так и вышло — у приложения на телефоне был закрыт доступ к интернету в
+     * разрешениях, и все дороги разом отвечали «Unable to resolve host», а
+     * игрок видел только «ни одна дорога не ответила» и не знал, куда смотреть.
+     * Поэтому такой отказ называется своим именем и говорит, где искать.
      */
     fun check(localVersionCode: Int): Check {
         val trouble = mutableListOf<String>()
+        // Все дороги разом не нашли имя — это не дорога виновата, а доступ к
+        // сети. Любая другая беда (ответ сервера, разбор файла) снимает флаг.
+        var namesUnresolved = true
         for (road in MANIFEST_ROADS) {
             val release = try {
                 parse(readText(road.url))
+            } catch (e: UnknownHostException) {
+                trouble += "${road.name}: имя не разрешилось (${e.message})"
+                continue
             } catch (e: Exception) {
+                namesUnresolved = false
                 trouble += "${road.name}: ${e.message ?: e.javaClass.simpleName}"
                 continue
             }
             if (release == null) {
+                namesUnresolved = false
                 trouble += "${road.name}: файл обновления не разобрался"
                 continue
             }
@@ -237,7 +253,14 @@ object Update {
             return if (isNewer(release, localVersionCode)) Check.Fresh(release) else Check.Current
         }
         Journal.note("обновление", "ни одна дорога не ответила: ${trouble.joinToString("; ")}")
-        return Check.Failed("ни одна дорога не ответила")
+        return Check.Failed(
+            if (namesUnresolved) {
+                "телефон не находит ни одного адреса — проверь, открыт ли приложению интернет " +
+                    "в разрешениях телефона"
+            } else {
+                "ни одна дорога не ответила"
+            },
+        )
     }
 
     /**
