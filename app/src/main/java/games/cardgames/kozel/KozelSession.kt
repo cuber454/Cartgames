@@ -10,6 +10,7 @@ import games.cardgames.durak.clearGame
 import games.cardgames.durak.loadGameText
 import games.cardgames.durak.saveGame
 import games.cardgames.settings.loadSettings
+import games.cardgames.settings.seatsAtTable
 import games.engine.kozel.KozelMatch
 import games.engine.kozel.KozelRules
 import games.engine.kozel.KozelSave
@@ -32,11 +33,29 @@ import games.engine.kozel.KozelSave
  * здесь матч из десятка раздач, и одна победа в «Козле» весила бы как десять
  * побед в «Дураке». Свой счёт у матча свой — до ста одного.
  */
+/**
+ * Сколько мест за столом для нового матча — сколько их в настройках.
+ *
+ * Число мест матч помнит сам (KozelSave выводит его из рук), поэтому
+ * поднятый с диска матч продолжается за своим столом, а не за тем, что
+ * стоит в настройках сейчас: иначе смена настройки посреди матча пересдала
+ * бы его на другое число мест.
+ */
+private fun seatsForNewMatch(context: Context): Int =
+    seatsAtTable(loadSettings(context), GAME_KOZEL)
+
 class KozelSession(context: Context) {
 
     private val appContext = context.applicationContext
 
-    var match by mutableStateOf(KozelMatch(loadKozelRules(context)))
+    /**
+     * Матч. Число мест берётся из настроек, а не из матча: матч его помнит
+     * сам (KozelSave), и поднятый с диска продолжается за своим столом, а
+     * смена настройки пересдаёт только следующую раздачу.
+     */
+    var match by mutableStateOf(
+        KozelMatch(loadKozelRules(context), seats = seatsForNewMatch(context)),
+    )
         private set
 
     /**
@@ -86,9 +105,12 @@ class KozelSession(context: Context) {
     /**
      * Новая партия. Первую фразу не задаём: экран сам решит, объявить раздачу
      * или сказать «продолжаем» — здесь для этого нет ни голоса, ни настроек.
+     *
+     * Число мест берём из настроек заново: смена «за столом трое» — это про
+     * следующую раздачу, и следующая начинается здесь.
      */
     fun restart(rules: KozelRules = KozelRules.BOOK) {
-        match = KozelMatch(rules)
+        match = KozelMatch(rules, seats = seatsForNewMatch(appContext))
         lastPhrase = ""
         restored = false
         forgetSaved()

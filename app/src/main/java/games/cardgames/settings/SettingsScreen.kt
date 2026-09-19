@@ -91,6 +91,17 @@ private enum class VoiceSlot(val title: String, val rateLabel: String, val inher
         "как у приложения",
     ),
     KOZEL("Голос соперника в козле", "Скорость речи соперника в козле", "как у приложения"),
+    /**
+     * Второй соперник «Козла» — тот, кто садится за стол, только когда за ним
+     * трое. Со своим голосом и скоростью, как в «Тысяче» и «Дураке»: за
+     * столом на троих двое одним голосом — уже не различить, кто выложил
+     * кость.
+     */
+    KOZEL_SECOND(
+        "Голос второго соперника в козле",
+        "Скорость речи второго соперника в козле",
+        "как у приложения",
+    ),
 }
 
 /**
@@ -100,12 +111,14 @@ private enum class VoiceSlot(val title: String, val rateLabel: String, val inher
  */
 private fun secondSlot(game: String): VoiceSlot = when (game) {
     GAME_THOUSAND -> VoiceSlot.THOUSAND_SECOND
+    GAME_KOZEL -> VoiceSlot.KOZEL_SECOND
     else -> VoiceSlot.DURAK_SECOND
 }
 
 /** Второй ли это соперник: у второго и строки в настройках игры другие. */
-private fun VoiceSlot.isSecond(): Boolean =
-    this == VoiceSlot.DURAK_SECOND || this == VoiceSlot.THOUSAND_SECOND
+private fun VoiceSlot.isSecond(): Boolean = this == VoiceSlot.DURAK_SECOND ||
+    this == VoiceSlot.THOUSAND_SECOND ||
+    this == VoiceSlot.KOZEL_SECOND
 
 /**
  * Каким голосом заговорит тот, чью строку настроек правят: у приложения — его
@@ -131,6 +144,7 @@ private fun slotEngineOwn(settings: Settings, slot: VoiceSlot): String? = when (
     VoiceSlot.THOUSAND -> settings.botEngineThousand
     VoiceSlot.THOUSAND_SECOND -> settings.botEngineThousandSecond
     VoiceSlot.KOZEL -> settings.botEngineKozel
+    VoiceSlot.KOZEL_SECOND -> settings.botEngineKozelSecond
 }
 
 /**
@@ -160,6 +174,8 @@ private fun withEngine(settings: Settings, slot: VoiceSlot, engine: String?): Se
         settings.copy(botEngineThousandSecond = engine, botVoiceThousandSecond = null)
 
     VoiceSlot.KOZEL -> settings.copy(botEngineKozel = engine, botVoiceKozel = null)
+    VoiceSlot.KOZEL_SECOND ->
+        settings.copy(botEngineKozelSecond = engine, botVoiceKozelSecond = null)
 }
 
 /**
@@ -181,6 +197,7 @@ private fun slotRate(settings: Settings, slot: VoiceSlot): Float = when (slot) {
     VoiceSlot.THOUSAND -> settings.botRateThousand
     VoiceSlot.THOUSAND_SECOND -> settings.botRateThousandSecond
     VoiceSlot.KOZEL -> settings.botRateKozel
+    VoiceSlot.KOZEL_SECOND -> settings.botRateKozelSecond
 }
 
 /** Те же настройки, но со сменённой скоростью у того, чья это строка. */
@@ -191,6 +208,7 @@ private fun withRate(settings: Settings, slot: VoiceSlot, rate: Float): Settings
     VoiceSlot.THOUSAND -> settings.copy(botRateThousand = rate)
     VoiceSlot.THOUSAND_SECOND -> settings.copy(botRateThousandSecond = rate)
     VoiceSlot.KOZEL -> settings.copy(botRateKozel = rate)
+    VoiceSlot.KOZEL_SECOND -> settings.copy(botRateKozelSecond = rate)
 }
 
 /** Голос, выбранный вручную: не выбран — null, и за столом звучит чужой. */
@@ -201,6 +219,7 @@ private fun slotVoiceName(settings: Settings, slot: VoiceSlot): String? = when (
     VoiceSlot.THOUSAND -> settings.botVoiceThousand
     VoiceSlot.THOUSAND_SECOND -> settings.botVoiceThousandSecond
     VoiceSlot.KOZEL -> settings.botVoiceKozel
+    VoiceSlot.KOZEL_SECOND -> settings.botVoiceKozelSecond
 }
 
 /**
@@ -476,6 +495,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 VoiceSlot.THOUSAND -> settings.copy(botVoiceThousand = name)
                 VoiceSlot.THOUSAND_SECOND -> settings.copy(botVoiceThousandSecond = name)
                 VoiceSlot.KOZEL -> settings.copy(botVoiceKozel = name)
+                VoiceSlot.KOZEL_SECOND -> settings.copy(botVoiceKozelSecond = name)
             },
         )
         // Голос берём из уже сохранённых настроек, а не считаем заново по
@@ -659,10 +679,11 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             }
 
             // Сколько мест за столом — рядом с соперником: это тоже про то,
-            // с кем играть. И в «Тысячу», и в «Дурака» играют и вдвоём, и
-            // втроём, и выбор тут не про правила, а про стол (THOUSAND.md,
-            // 1.2; в «Дураке» — круг подкидывающих, GAMES.md).
-            if (game == GAME_THOUSAND || game == GAME_DURAK) {
+            // с кем играть. И в «Тысячу», и в «Дурака», и в «Козла» играют
+            // и вдвоём, и втроём, и выбор тут не про правила, а про стол
+            // (THOUSAND.md, 1.2; в «Дураке» — круг подкидывающих, GAMES.md;
+            // в «Козле» — семь костей в базаре вместо четырнадцати).
+            if (game == GAME_THOUSAND || game == GAME_DURAK || game == GAME_KOZEL) {
                 Spacer(Modifier.height(8.dp))
                 val seats = seatsAtTable(settings, game)
                 SettingButton("За столом: ${seatsTitle(seats)}") {

@@ -45,12 +45,13 @@ import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_KOZEL
 import games.cardgames.settings.botEngine
 import games.cardgames.settings.botSpeaksAlone
-import games.cardgames.settings.botTitle
 import games.cardgames.settings.botVoice
 import games.cardgames.settings.loadSettings
+import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.FIRST_BOT_SEAT
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
@@ -76,9 +77,11 @@ import games.engine.tiles.pipsName
 import kotlinx.coroutines.delay
 import kotlin.random.Random
 
-/** Место игрока за столом. Бот — второй. */
+/** Место игрока за столом. Соперники сидят за остальными. */
 private const val PLAYER = 0
-private const val BOT = 1
+
+/** Место второго соперника: садится за стол, когда мест трое. */
+private const val SECOND_BOT = 2
 
 /** Пауза перед ходом бота, чтобы не тараторил. */
 private const val BOT_DELAY_MS = 700L
@@ -141,7 +144,15 @@ fun KozelScreen(
     // Настройки читаем при каждом входе на экран: игрок мог ходить в них
     // прямо посреди партии, и партия от этого не должна пропасть.
     val settings = remember { loadSettings(context) }
-    val bot = botTitle(settings, GAME_KOZEL)
+
+    // Как звать сидящих за столом, по местам: место игрока — «ты», у прочих
+    // своё имя. Число мест берём у матча, а не у настроек: матч помнит стол,
+    // за которым его начали, и смена настройки посреди него имён не
+    // переписывает.
+    val names = seatTitles(settings, GAME_KOZEL, session.match.seats)
+
+    // Места соперников за этим столом. На троих их двое.
+    val botSeats = (FIRST_BOT_SEAT until session.match.seats).toList()
 
     val speaker = remember(settings.engine, settings.voice, settings.rate) {
         Speaker(
@@ -176,6 +187,33 @@ fun KozelScreen(
             ),
         )
     }
+    // Голос второго соперника — только когда за столом трое: на двоих второй
+    // синтезатор был бы движком, которого никто не слышит.
+    val botSpeakerSecond = remember(
+        settings.engine,
+        settings.botEngineKozelSecond,
+        settings.voice,
+        settings.botVoiceKozelSecond,
+        settings.botRateKozelSecond,
+        settings.rate,
+        session.match.seats,
+    ) {
+        if (session.match.seats < 3) {
+            null
+        } else {
+            Speaker(
+                context = context,
+                rate = settings.botRateKozelSecond,
+                enginePackage = botEngine(settings.botEngineKozelSecond, settings.engine),
+                voiceName = botVoice(
+                    settings.botVoiceKozelSecond,
+                    settings.voice,
+                    settings.botEngineKozelSecond,
+                    settings.engine,
+                ),
+            )
+        }
+    }
     // Бот со своим синтезатором или своим голосом говорит им и при работающем
     // скринридере: тот озвучивает приложение, а соперник — своим голосом
     // (SETTINGS.md, 8).
@@ -185,15 +223,21 @@ fun KozelScreen(
         settings.botEngineKozel,
         settings.engine,
     )
+    val botSecondApart = botSpeaksAlone(
+        settings.botVoiceKozelSecond,
+        settings.voice,
+        settings.botEngineKozelSecond,
+        settings.engine,
+    )
     val sounds = remember { TableSounds(context) }
     val vibrations = remember { Vibrations(context) }
-    DisposableEffect(speaker, botSpeaker) {
-        onDispose {
-            speaker.shutdown()
-            botSpeaker.shutdown()
-            sounds.release()
-        }
-    }
+    // Гасим каждый синтезатор порознь: второй заводится и пропадает вместе с
+    // третьим местом за столом, а общий onDispose на всех погасил бы заодно и
+    // те, что остались в работе.
+    DisposableEffect(speaker) { onDispose { speaker.shutdown() } }
+    DisposableEffect(botSpeaker) { onDispose { botSpeaker.shutdown() } }
+    DisposableEffect(botSpeakerSecond) { onDispose { botSpeakerSecond?.shutdown() } }
+    DisposableEffect(sounds) { onDispose { sounds.release() } }
 
     val rng = remember { Random.Default }
     // Речь бота живёт выше партии: мешки зачинов должны переживать и
@@ -219,10 +263,13 @@ fun KozelScreen(
     // скринридером и запись фразы для «Повтори» живут там, одни на все игры.
     val speechNow = rememberUpdatedState(speech)
     val rateNow = rememberUpdatedState(settings.rate)
-    val voice = remember(speaker, botSpeaker, botApart) {
+    val voice = remember(speaker, botSpeaker, botSpeakerSecond, botApart, botSecondApart) {
         TableVoice(
             speaker = speaker,
-            botSpeakers = mapOf(BOT to BotVoice(botSpeaker, botApart)),
+            botSpeakers = buildMap {
+                put(FIRST_BOT_SEAT, BotVoice(botSpeaker, botApart))
+                botSpeakerSecond?.let { put(SECOND_BOT, BotVoice(it, botSecondApart)) }
+            },
             view = view,
             speech = { speechNow.value },
             rate = { rateNow.value },
@@ -237,13 +284,26 @@ fun KozelScreen(
      * [speak] = false — бот промолчал по своей воле (см. [KozelTalker]); фразу
      * всё равно запоминаем, её повторит кнопка «Повтори».
      */
-    fun sayBotMove(text: String, speak: Boolean = true) {
+    fun sayBotMove(seat: Int, text: String, speak: Boolean = true) {
         if (!settings.botTalk || !speak) {
             session.lastPhrase = text
             return
         }
-        voice.sayBot(text)
+        voice.sayBot(text, seat = seat)
     }
+
+    /**
+     * Чья это будет фраза и как её позвать.
+     *
+     * Имя нужно только там, где фразу читает скринридер, и только на троих: у
+     * него один голос на всех, и «кладу три-три» без имени не говорит, кто
+     * кладёт (Катерина, 19.09: «чтобы каждому боту можно было своё имя давать,
+     * например ходит Петя, ходит Вася»). Своим голосом бот говорит о себе «я»
+     * — двоих соперников различают голоса, а не имя. За столом на двоих
+     * соперник один и различать нечего.
+     */
+    fun botLine(seat: Int, text: String): String =
+        if (session.match.seats >= 3 && !voice.speaksAlone(seat)) "${names[seat]}, $text" else text
 
     fun soundFor(move: KozelMove) {
         if (!settings.sounds) return
@@ -274,7 +334,7 @@ fun KozelScreen(
         // сказанное, и только потом считаем вслух. Иначе из двух фраз
         // выживает вторая, и игрок слышит счёт, не услышав своего хода.
         voice.say(
-            roundPhrase(summary, session.match.rules.target, bot),
+            roundPhrase(summary, session.match.rules.target, names),
             afterMs = voice.waitMs(),
         )
     }
@@ -312,7 +372,7 @@ fun KozelScreen(
             // Отказ — ответ на нажатие, а не событие за столом: игрок ждёт его
             // сразу, поэтому говорим своим голосом, даже когда за столом
             // говорит скринридер.
-            voice.sayRequested(refusalPhrase(round))
+            voice.sayRequested(refusalPhrase(round, names))
             return
         }
         // Два случая, когда решает не правило, а игрок: кость подходит к
@@ -331,12 +391,12 @@ fun KozelScreen(
         if (settings.sounds) sounds.deal()
         if (settings.signals) sounds.start()
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
-        voice.say(dealPhrase(session.match.round), afterMs = afterMs)
+        voice.say(dealPhrase(session.match.round, names), afterMs = afterMs)
     }
 
-    // За столом играют оба, и ход бота — это не одно действие, а серия: пока
-    // ход не вернётся к игроку, бот ходит сам. Раунд кончился — считаем его,
-    // объявляем итог и играем следующий, пока матч не кончится.
+    // За неигровые места играем подряд, пока ход не вернётся к игроку: на
+    // троих это два хода подряд, и оба — не его. Раунд кончился — считаем
+    // его, объявляем итог и играем следующий, пока матч не кончится.
     LaunchedEffect(session.tick) {
         var played = false
         var guard = 0
@@ -355,13 +415,14 @@ fun KozelScreen(
                 continue
             }
 
-            if (round.turn != BOT) break
+            val seat = round.turn
+            if (seat == PLAYER) break
 
             // Ждём не «полсекунды», а пока договорит предыдущая фраза: иначе
             // бот перебивает сам себя и слышно только последнее слово.
             delay(voice.waitMs())
             val move = KozelBot.chooseMove(
-                KozelView.of(round, BOT),
+                KozelView.of(round, seat),
                 settings.botDifficultyKozel,
                 rng,
             ) ?: break
@@ -371,17 +432,17 @@ fun KozelScreen(
             val line = talker.line(
                 move = move,
                 lineEmpty = round.table.isEmpty,
-                ownHandSize = round.handSize(BOT),
+                ownHandSize = round.handSize(seat),
             )
             soundFor(move)
-            round.apply(BOT, move)
+            round.apply(seat, move)
             // Звук хода и реплика стартуют в один момент и налезают друг на
             // друга. Разводим: сначала звук, потом речь.
             if (settings.botTalk && line.speak) {
                 val gap = soundGap(move)
                 if (gap > 0) delay(gap + PHRASE_GAP_MS)
             }
-            sayBotMove(line.text, line.speak)
+            sayBotMove(seat, botLine(seat, line.text), line.speak)
             session.persist()
             played = true
         }
@@ -429,13 +490,14 @@ fun KozelScreen(
                         round = session.match.round,
                         scores = session.match.table,
                         roundNumber = session.match.roundNumber,
+                        names = names,
                     ),
                     whenReady = true,
                 )
             }
 
             session.lastPhrase.isBlank() -> {
-                voice.say(dealPhrase(session.match.round), whenReady = true)
+                voice.say(dealPhrase(session.match.round, names), whenReady = true)
             }
 
             // Вернулись с другого экрана — напоминаем, на чём остановились.
@@ -456,10 +518,41 @@ fun KozelScreen(
     val moves = round.legalMoves(PLAYER)
 
     val status = buildString {
-        append(if (round.finished) "Раунд кончился." else if (moves.isNotEmpty()) "Твой ход." else "Ход соперника.")
+        append(
+            when {
+                round.finished -> "Раунд кончился."
+                moves.isNotEmpty() -> "Твой ход."
+                // «Ход соперника», а не по имени: «ход Пети» — падеж, а
+                // склонять произвольное имя программа не умеет; на троих же
+                // «соперник» не говорит, кого ждать, поэтому там имя стоит
+                // подлежащим — «Ходит Петя» (SETTINGS.md, 8).
+                botSeats.size == 1 -> "Ход соперника."
+                else -> "Ходит ${names[round.turn]}."
+            },
+        )
         append(" У тебя ${round.handSize(PLAYER)}.")
         append(" В базаре ${round.bazaarSize}.")
-        append(" У соперника ${round.handSize(BOT)}.")
+        if (botSeats.size == 1) {
+            append(" У соперника ${round.handSize(FIRST_BOT_SEAT)}.")
+        } else {
+            append(" Соперники: ${botSeats.joinToString(", ") { "${names[it]} ${round.handSize(it)}" }}.")
+        }
+    }
+
+    // Счёт матча. За столом на троих перечисляется по местам: «у соперника»
+    // уже не говорит, у кого сколько.
+    val scoreLine = buildString {
+        append("Счёт: ")
+        append(
+            if (match.seats <= 2) {
+                "у тебя ${match.table[PLAYER]}, у соперника ${match.table[FIRST_BOT_SEAT]}"
+            } else {
+                (0 until match.seats).joinToString(", ") {
+                    seatScore(it, names, "${match.table[it]}")
+                }
+            },
+        )
+        append(". Раунд ${match.roundNumber}. До ${match.rules.target}.")
     }
 
     // Порядок костей — ровно тот, что выбран в настройках, и ничего поверх:
@@ -525,8 +618,7 @@ fun KozelScreen(
                 Text(text = status, style = MaterialTheme.typography.titleMedium, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Счёт: у тебя ${match.table[PLAYER]}, у соперника ${match.table[BOT]}. " +
-                        "Раунд ${match.roundNumber}. До ${match.rules.target}.",
+                    scoreLine,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2,
                 )
@@ -701,7 +793,7 @@ fun KozelScreen(
             // кнопку снаружи, до неё не доходит, и скринридер читает «без
             // метки» — проверено на телефоне.
             Button(
-                onClick = { voice.sayRequested(allowedPhrase(round)) },
+                onClick = { voice.sayRequested(allowedPhrase(round, names)) },
                 modifier = Modifier.weight(1f),
             ) {
                 Text(
@@ -818,64 +910,142 @@ private fun chooseTitle(tile: Tile, both: KozelMove.PlaceBoth?): String =
  * Очки в «Козле» штрафные, и записывают их проигравшему раунд. Поэтому про
  * запись говорим в дательном: «тебе записано», а не «ты набрал» — набрал тут
  * как раз тот, кто выиграл.
+ *
+ * За столом на троих проигравших двое, и «соперник» не говорит, кто именно:
+ * вышедший не пишет ничего, а каждый из оставшихся считает своё (Катерина,
+ * 19.09), поэтому там запись перечисляется по местам.
  */
-private fun roundPhrase(summary: KozelSummary, target: Int, bot: String): String = buildString {
-    append(
-        when {
-            summary.fish && summary.winner == null ->
-                "Рыба. Руки равны, никто ничего не записал."
+private fun roundPhrase(summary: KozelSummary, target: Int, names: List<String>): String = buildString {
+    if (summary.written.size <= 2) {
+        append(
+            when {
+                summary.fish && summary.winner == null ->
+                    "Рыба. Руки равны, никто ничего не записал."
 
-            summary.fish && summary.winner == PLAYER ->
-                "Рыба. У соперника рука тяжелее: ему записано ${summary.points}."
+                summary.fish && summary.winner == PLAYER ->
+                    "Рыба. У соперника рука тяжелее: ему записано ${summary.written[FIRST_BOT_SEAT]}."
 
-            summary.fish ->
-                "Рыба. У тебя рука тяжелее: тебе записано ${summary.points}."
+                summary.fish ->
+                    "Рыба. У тебя рука тяжелее: тебе записано ${summary.written[PLAYER]}."
 
-            summary.winner == PLAYER ->
-                "Ты вышел. Сопернику записано ${summary.points}."
+                summary.winner == PLAYER ->
+                    "Ты вышел. Сопернику записано ${summary.written[FIRST_BOT_SEAT]}."
 
-            else -> "$bot вышел. Тебе записано ${summary.points}."
-        },
-    )
-    append(" Счёт: у тебя ${summary.scores[PLAYER]}, у соперника ${summary.scores[BOT]}.")
-    when (summary.matchWinner) {
-        PLAYER -> append(" Ты выиграл матч: $bot — козёл, набрал ${summary.scores[BOT]}.")
-        BOT -> append(" Матч за соперником: ты козёл, набрал ${summary.scores[PLAYER]}.")
-        else -> append(" Играем до $target.")
+                else -> "${names[FIRST_BOT_SEAT]} вышел. Тебе записано ${summary.written[PLAYER]}."
+            },
+        )
+        append(
+            " Счёт: у тебя ${summary.scores[PLAYER]}, " +
+                "у соперника ${summary.scores[FIRST_BOT_SEAT]}.",
+        )
+    } else {
+        val who = writes(summary, names)
+        // Итог раунда берём в местную переменную: свойство движка — чужая
+        // для экрана сторона, и умного приведения типов через границу
+        // модуля у него нет.
+        val winner = summary.winner
+        append(
+            when {
+                winner == PLAYER -> "Ты вышел."
+
+                // Имя здесь подлежащим: падежа оно не требует, а склонять
+                // произвольное имя программа не умеет (SETTINGS.md, 8).
+                winner != null -> "${names[winner]} вышел."
+
+                who.isEmpty() -> "Рыба. Руки равны."
+
+                else -> "Рыба."
+            },
+        )
+        append(if (who.isEmpty()) " Никому ничего не записано." else " Записано: $who.")
+        append(
+            " Счёт: " + summary.scores.indices.joinToString(", ") {
+                seatScore(it, names, "${summary.scores[it]}")
+            } + ".",
+        )
+    }
+
+    // Козёл — единственный итог матча: за столом на троих до цели не дошёл
+    // никто из двоих, и оба они выиграли одинаково.
+    val goat = summary.goat
+    if (goat == null) {
+        append(" Играем до $target.")
+    } else if (goat == PLAYER) {
+        append(" Ты козёл: набрал ${summary.scores[PLAYER]}.")
+    } else {
+        append(" ${names[goat]} — козёл, набрал ${summary.scores[goat]}.")
     }
 }
+
+/**
+ * Кому сколько записали за раунд: «тебе 12, Петя 7». Пусто — не записали
+ * никому.
+ *
+ * Место игрока зовётся «тебе», прочие — по имени и без падежа: имя тут
+ * подлежащее-название, как в счёте на экране.
+ */
+private fun writes(summary: KozelSummary, names: List<String>): String =
+    summary.written.indices
+        .filter { summary.written[it] > 0 }
+        .joinToString(", ") { seatScore(it, names, "${summary.written[it]}") }
+
+/** Место за столом в перечислении: игрок — «тебе», соперники — по имени. */
+private fun seatScore(seat: Int, names: List<String>, value: String): String =
+    if (seat == PLAYER) "тебе $value" else "${names[seat]} $value"
 
 /**
  * Раздача. Перечислять кости не надо — их игрок слушает свайпом по руке, и
  * вслух они превращаются в длинную ленту, которую он всё равно не удержит;
  * порядок он выбрал сам в настройках. Стол при раздаче пуст — о нём молчим.
  */
-private fun dealPhrase(round: KozelRound): String =
+private fun dealPhrase(round: KozelRound, names: List<String>): String =
     "Раздача. У тебя ${round.handSize(PLAYER)} костей, в базаре ${round.bazaarSize}. " +
-        turnPhrase(round)
+        turnPhrase(round, names)
 
 /**
  * Что сказать, когда матч поднят с диска. Игрок вернулся через час или после
  * случайного выхода и не помнит стол — напоминаем положение дел, а не
  * «продолжаем», за которым ничего не стоит.
  */
-private fun resumePhrase(round: KozelRound, scores: List<Int>, roundNumber: Int): String {
+private fun resumePhrase(
+    round: KozelRound,
+    scores: List<Int>,
+    roundNumber: Int,
+    names: List<String>,
+): String {
     val table = if (round.table.isEmpty) "" else " Стол: ${round.spokenEnds()}, костей ${round.tableSize}."
+    val others = if (round.seats <= 2) {
+        "у соперника ${round.handSize(FIRST_BOT_SEAT)}"
+    } else {
+        (FIRST_BOT_SEAT until round.seats).joinToString(", ") {
+            "${names[it]} ${round.handSize(it)}"
+        }
+    }
+    val score = if (scores.size <= 2) {
+        "у тебя ${scores[PLAYER]}, у соперника ${scores[FIRST_BOT_SEAT]}"
+    } else {
+        scores.indices.joinToString(", ") { seatScore(it, names, "${scores[it]}") }
+    }
     return "Продолжаем партию. Раунд $roundNumber. У тебя ${round.handSize(PLAYER)} костей, " +
-        "в базаре ${round.bazaarSize}, у соперника ${round.handSize(BOT)}." +
-        " Счёт: у тебя ${scores[PLAYER]}, у соперника ${scores[BOT]}.$table ${turnPhrase(round)}"
+        "в базаре ${round.bazaarSize}, $others." +
+        " Счёт: $score.$table ${turnPhrase(round, names)}"
 }
 
-private fun turnPhrase(round: KozelRound): String =
-    if (round.legalMoves(PLAYER).isNotEmpty()) "Твой ход." else "Ход соперника."
+private fun turnPhrase(round: KozelRound, names: List<String>): String = when {
+    round.legalMoves(PLAYER).isNotEmpty() -> "Твой ход."
+    // «Ход соперника», а не по имени: «ход Пети» — падеж. На троих, где
+    // соперников двое, имя стоит подлежащим — «Ходит Петя» (SETTINGS.md, 8).
+    round.seats <= 2 -> "Ход соперника."
+    else -> "Ходит ${names[round.turn]}."
+}
 
 /** Концы линии вслух, когда ход вернулся к игроку. */
 private fun endsPhrase(round: KozelRound): String = "${round.spokenEnds()}. $TURN_PHRASE"
 
 /** Почему костью не пройти — ответ на нажатие. */
-private fun refusalPhrase(round: KozelRound): String = when {
+private fun refusalPhrase(round: KozelRound, names: List<String>): String = when {
     round.finished -> "Раунд кончился."
-    round.turn != PLAYER -> "Сейчас ход соперника, подожди."
+    round.turn != PLAYER -> waitingPhrase(round, names)
     // Отказ на первом ходу звучал бы как «этой костью не пройти», хотя
     // пройти можно — только другой костью. Поэтому называем ту, которой
     // раунд и открывают.
@@ -883,6 +1053,13 @@ private fun refusalPhrase(round: KozelRound): String = when {
     round.bazaarSize > 0 -> "Этой костью не пройти. Возьми из базара."
     else -> "Этой костью не пройти. Ход придётся пропустить."
 }
+
+/**
+ * Почему хода сейчас нет: за столом на троих «ход соперника» не говорит,
+ * кого ждать.
+ */
+private fun waitingPhrase(round: KozelRound, names: List<String>): String =
+    if (round.seats <= 2) "Сейчас ход соперника, подожди." else "Сейчас ходит ${names[round.turn]}, подожди."
 
 /**
  * Первый ход раунда: младший дубль, которым его открывают, — и больше
@@ -900,10 +1077,10 @@ private fun openingPhrase(round: KozelRound): String? {
  * Что можно сделать прямо сейчас. Про конец линии говорим там, где он есть:
  * в пустую линию кость кладут как угодно, и «влево» там ничего не значит.
  */
-private fun allowedPhrase(round: KozelRound): String {
+private fun allowedPhrase(round: KozelRound, names: List<String>): String {
     val moves = round.legalMoves(PLAYER)
     if (moves.isEmpty()) {
-        return if (round.finished) "Раунд кончился." else "Сейчас ход соперника, подожди."
+        return if (round.finished) "Раунд кончился." else waitingPhrase(round, names)
     }
 
     val empty = round.table.isEmpty
