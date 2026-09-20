@@ -143,7 +143,7 @@ class Speaker(
         }
 
         val tts = engine ?: return
-        tts.language = Locale.forLanguageTag("ru-RU")
+        tts.language = speechLanguage(tts)
 
         if (voiceName != null) {
             runCatching {
@@ -232,7 +232,16 @@ class Speaker(
      */
     fun defaultEngine(): String? = runCatching { engine?.defaultEngine }.getOrNull()
 
-    /** Русские голоса текущего синтезатора. Если русских нет — все, какие есть. */
+    /**
+     * Голоса текущего синтезатора на языке системы. Если таких нет — русские,
+     * если и русских нет — все, какие есть.
+     *
+     * Язык берётся у системы, а не стоит русским жёстко (Катерина, 20.09:
+     * «язык голосов чтобы был такой же как в системе»): список из голосов,
+     * которых игрок в телефоне не выбирал и не слышал, — это список чужих
+     * голосов. Откат на русский — не украшение: там, где система не
+     * по-русски, список иначе остался бы пустым, и выбирать было бы не из чего.
+     */
     fun voices(): List<Voice> = runCatching {
         val all = engine?.voices?.sortedBy { it.name } ?: emptyList()
         // Голос со словарём «не установлен» промолчит: выбрать его — значит
@@ -240,7 +249,10 @@ class Speaker(
         // всё, что есть: пусть игрок слышит, что выбор существует.
         val installed = all.filterNot { TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in it.features }
         val usable = installed.ifEmpty { all }
-        usable.filter { it.locale.language == "ru" }.ifEmpty { usable }
+        val wanted = systemLanguage().language
+        usable.filter { it.locale.language == wanted }
+            .ifEmpty { usable.filter { it.locale.language == RUSSIAN.language } }
+            .ifEmpty { usable }
     }.getOrDefault(emptyList())
 
     /** Имя голоса, которым говорим сейчас. */
@@ -306,3 +318,27 @@ class Speaker(
         ready = false
     }
 }
+
+/** Русский: язык, на котором написаны все фразы приложения. */
+private val RUSSIAN = Locale.forLanguageTag("ru-RU")
+
+/** Язык системы — тот, что стоит в настройках телефона у самого игрока. */
+private fun systemLanguage(): Locale = Locale.getDefault()
+
+/**
+ * Язык, которым этому движку говорить: язык системы, а если движок его не
+ * знает — русский.
+ *
+ * Откат нужен затем, что фразы у нас русские: движок, которому нечего сказать
+ * про системный язык, прочитал бы их чужим голосом, а то и промолчал. Русский
+ * тут — не «как было», а последний язык, на котором приложению точно есть что
+ * сказать.
+ */
+private fun speechLanguage(tts: TextToSpeech): Locale = systemLanguage()
+    .takeIf { supported(tts, it) }
+    ?: RUSSIAN
+
+/** Знает ли движок этот язык. */
+private fun supported(tts: TextToSpeech, locale: Locale): Boolean =
+    runCatching { tts.isLanguageAvailable(locale) }
+        .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED) >= TextToSpeech.LANG_AVAILABLE

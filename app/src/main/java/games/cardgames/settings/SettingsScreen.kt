@@ -376,6 +376,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     // собеседник говорит, а он у каждой строки свой.
     var picking by remember { mutableStateOf<Pair<VoiceSlot, List<Voice>>?>(null) }
 
+    // Список синтезаторов открыт для одной из строк — вместе с её названием:
+    // им же подписан и открытый список. null — закрыт.
+    var pickingEngine by remember { mutableStateOf<Pair<VoiceSlot, String>?>(null) }
+
     // Проба голоса идёт своим синтезатором, а не тем, которым говорят сами
     // настройки: голос у них разный, и подменять голос живого синтезатора
     // значило бы, что после пробы настройки заговорят не своим голосом.
@@ -462,6 +466,23 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     fun slotVoices(slot: VoiceSlot): List<Voice> {
         val bot = botSpeaker(slot)
         return if (bot == null) voices else remember(bot, readyTick) { bot.voices() }
+    }
+
+    /**
+     * Что предложить в списке синтезаторов для этой строки.
+     *
+     * Порядок тот же, что был у перебора: сначала «как у приложения» (у самого
+     * приложения это «системный»), потом — только соперникам — системный движок
+     * телефона, потом установленные.
+     *
+     * «Как у приложения» — не то же, что «системный»: там бот говорит движком
+     * приложения и голосом приложения тоже, а тут берёт движок телефона — тот
+     * самый, которым говорит скринридер.
+     */
+    fun engineOptions(slot: VoiceSlot): List<Pair<String?, String>> = buildList {
+        add(null to if (slot == VoiceSlot.APP) systemTitle else slot.inherit)
+        if (slot != VoiceSlot.APP) add("" to systemTitle)
+        engines.forEach { add(it.name to it.label) }
     }
 
     fun save(next: Settings) {
@@ -755,6 +776,26 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     }
 
     /**
+     * Выбрать синтезатор одному из говорящих. Выбор сразу и звучит: движки
+     * различают на слух, а «com.google.android.tts» человеку не говорит
+     * ничего.
+     *
+     * Выбранный голос при этом стирается: имя голоса живёт внутри движка
+     * (см. [withEngine]), и чужой движок его не знает. Образец поэтому звучит
+     * голосом нового движка по умолчанию — ровно тем, каким этот собеседник
+     * заговорит за столом, пока ему не выбрали голос.
+     */
+    fun pickEngine(slot: VoiceSlot, value: String?, shown: String) {
+        save(withEngine(settings, slot, value))
+        auditionVoice(
+            engine = slotEngine(settings, slot),
+            voice = slotVoice(settings, slot),
+            text = "Синтезатор: $shown. $SAMPLE",
+            rate = slotRate(settings, slot),
+        )
+    }
+
+    /**
      * Строка скорости речи того, кто за столом говорит.
      *
      * Скорость выбирают на слух, как и голос, поэтому образец звучит его
@@ -813,34 +854,24 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * «меня всё равно разговаривает всё одним голосом»). Другой движок
      * слышно сразу.
      *
-     * «Как у приложения» — не то же, что «системный»: там бот говорит движком
-     * приложения и голосом приложения тоже, а тут берёт движок телефона — тот
-     * самый, которым говорит скринридер.
+     * Строка не перебирает движки по кругу, а открывает список (Катерина,
+     * 20.09: «добавь окошко выбора движка, чтобы не циклично переключалось —
+     * открыла, выбрала, и дальше голос выбираешь в другом окошке»). Движков в
+     * телефоне бывает и десяток: перебор заставлял бы раз за разом выслушивать
+     * все подряд, чтобы вернуться к прежнему. Голос выбирают следом, во втором
+     * окне, — это две разные настройки, и связывать их в одну нельзя.
      */
     @Composable
     fun engineRow(slot: VoiceSlot, label: String) {
         val own = slotEngineOwn(settings, slot)
-        val options: List<Pair<String?, String>> = buildList {
-            add(null to if (slot == VoiceSlot.APP) systemTitle else slot.inherit)
-            if (slot != VoiceSlot.APP) add("" to systemTitle)
-            engines.forEach { add(it.name to it.label) }
-        }
+        val options = engineOptions(slot)
         val found = options.indexOfFirst { it.first == own }
         val index = if (found < 0) 0 else found
-        SettingButton("$label: ${options[index].second} (${index + 1} из ${options.size})") {
+        SettingButton("$label: ${options[index].second} (открыть список)") {
             if (engines.isEmpty()) {
                 announce("Список синтезаторов ещё не готов, нажми ещё раз.")
             } else {
-                val (value, shown) = options[(index + 1) % options.size]
-                save(withEngine(settings, slot, value))
-                auditionVoice(
-                    engine = slotEngine(settings, slot),
-                    voice = slotVoice(settings, slot),
-                    text = "Синтезатор: $shown. $SAMPLE",
-                    // Скорость — его же: у бота она своя, и слышать её надо
-                    // там же, где он ею заговорит.
-                    rate = slotRate(settings, slot),
-                )
+                pickingEngine = slot to label
             }
         }
     }
@@ -1308,6 +1339,21 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             onClose = { picking = null },
         )
     }
+
+    // Список синтезаторов. Устроен так же, как список голосов: открывается
+    // поверх настроек и не закрывается после выбора — движки сравнивают на
+    // слух, перебирая несколько подряд.
+    val openEngine = pickingEngine
+    if (openEngine != null) {
+        val (engineSlot, engineLabel) = openEngine
+        EnginePickerDialog(
+            title = engineLabel,
+            options = engineOptions(engineSlot),
+            current = slotEngineOwn(settings, engineSlot),
+            onPick = { value, shown -> pickEngine(engineSlot, value, shown) },
+            onClose = { pickingEngine = null },
+        )
+    }
 }
 
 /**
@@ -1334,13 +1380,13 @@ private fun VoicePickerDialog(
         title = { Text(slot.title) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                VoiceOption(
+                PickerOption(
                     label = inherit,
                     selected = current == null,
                     onClick = { onPick(null, -1) },
                 )
                 voices.forEachIndexed { index, voice ->
-                    VoiceOption(
+                    PickerOption(
                         label = "${index + 1}. ${voice.name}",
                         selected = voice.name == current,
                         onClick = { onPick(voice.name, index) },
@@ -1354,8 +1400,49 @@ private fun VoicePickerDialog(
     )
 }
 
+/**
+ * Список синтезаторов — тот же, что список голосов, но про движки.
+ *
+ * Списком, а не перебором по кругу (Катерина, 20.09): движков в телефоне
+ * бывает и десяток, и вернуться перебором к прежнему — значит выслушать все
+ * остальные. Названия оставлены системными: «Синтезатор Google» — это всё, чем
+ * движок себя называет. Выбирают его на слух, а номер перед названием говорит,
+ * где мы в списке.
+ *
+ * Голос здесь не выбирают: он живёт внутри движка и с переменой движка
+ * стирается — голос выбирают следом, во втором окне.
+ */
 @Composable
-private fun VoiceOption(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun EnginePickerDialog(
+    title: String,
+    options: List<Pair<String?, String>>,
+    current: String?,
+    onPick: (value: String?, shown: String) -> Unit,
+    onClose: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(title) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                options.forEachIndexed { index, (value, shown) ->
+                    PickerOption(
+                        label = "${index + 1}. $shown",
+                        selected = value == current,
+                        onClick = { onPick(value, shown) },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClose) { Text("Готово") }
+        },
+    )
+}
+
+/** Кнопка в списке выбора — строка списка голосов или списка синтезаторов. */
+@Composable
+private fun PickerOption(label: String, selected: Boolean, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Text(
             // Выбранный помечен словом, а не птичкой: птичку скринридер не
