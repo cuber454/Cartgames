@@ -291,14 +291,61 @@ private fun GamesScreen(
         speaker.say("Игры. Дурак, тысяча, козёл. ${score.spoken()}$tail")
     }
 
-    // Новая сборка не должна ждать, пока игрок заглянет в настройки: о ней
-    // приложение говорит при входе, как и раньше. Скачивание и установка
-    // живут в настройках — там же, где и был их дом.
+    // Итог установки, которую доводила система, и новость о новой сборке —
+    // одним заходом, а не двумя: две фразы подряд перебивают друг друга, и
+    // первая осталась бы недослушанной.
     LaunchedEffect(Unit) {
-        if (!settings.autoUpdate || !speech.speaks) return@LaunchedEffect
-        val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }
-        if (found is Update.Check.Fresh) {
-            speaker.say("Вышла новая версия ${found.release.title}. Скачать и поставить её можно в настройках.")
+        if (!speech.speaks) return@LaunchedEffect
+
+        // Итог прошлой установки — первым: игрок в этот момент смотрит, что
+        // стало с приложением, и о неудаче узнать больше неоткуда. Сказанное
+        // здесь стирается: сказанное дважды — не сказанное.
+        Update.takeOutcome(context)?.let { speaker.say(it, interrupt = false) }
+
+        // Разрешения спрашиваем при входе, а не тогда, когда они понадобились:
+        // на свежей установке их нет ни одного, и первое же обновление упёрлось
+        // бы в строку, которая молчит (Катерина, 20.09). Спрашиваем то, что
+        // вообще можно спросить: разрешение установщика выдаётся на системном
+        // экране, и без него система не примет сборку.
+        if (!Update.canInstall(context)) {
+            speaker.say(
+                "Приложению нужно разрешение ставить обновления — сейчас открою экран, " +
+                    "где оно выдаётся.",
+                interrupt = false,
+            )
+            runCatching { context.startActivity(Update.permissionIntent(context)) }
+        }
+
+        if (!settings.autoUpdate) return@LaunchedEffect
+        when (val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }) {
+            is Update.Check.Fresh -> speaker.say(
+                "Вышла новая версия ${found.release.title}. " +
+                    if (Update.canInstall(context)) {
+                        "В настройках строка «проверить обновление» поставит её сама."
+                    } else {
+                        "Без разрешения на установку она не встанет."
+                    },
+                interrupt = false,
+            )
+
+            // Дорога до сети — единственный отказ, который чинится не в
+            // приложении: имена не разрешаются, когда ему закрыт интернет.
+            // Говорим об этом при входе и ведём на экран разрешений: сам
+            // попросить интернет программа не может.
+            is Update.Check.Failed -> if (found.network) {
+                // Сеть у телефона есть, а имён нет — значит закрыт доступ
+                // приложению, и чинится это на экране его разрешений. Если
+                // сети нет вовсе, открывать нечего: там её и не выдадут.
+                val blocked = Update.networkIsUp(context)
+                speaker.say(
+                    "Нет связи с сервером обновлений: ${found.reason}." +
+                        if (blocked) " Сейчас открою настройки приложения." else "",
+                    interrupt = false,
+                )
+                if (blocked) runCatching { context.startActivity(Update.appSettingsIntent(context)) }
+            }
+
+            Update.Check.Current -> Unit
         }
     }
 

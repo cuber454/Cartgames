@@ -1,5 +1,6 @@
 package games.cardgames.settings
 
+import android.content.Intent
 import android.speech.tts.Voice
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -80,6 +81,16 @@ private const val INSTALL_PERMISSION =
     "Сейчас откроется системный экран разрешения — это окно Андроида, а не игра. " +
         "Включи на нём «Разрешить установку из этого источника», потом вернись в игру " +
         "кнопкой «Назад»: дальше я продолжу сам."
+
+/**
+ * Тихая установка: системного окна не будет вовсе.
+ *
+ * Фраза короткая нарочно. Приложение ставит само себя, а после установки
+ * система его перезапускает — то есть обрывает на полуслове. Длинное
+ * объяснение тут прозвучало бы до середины, и игрок решил бы, что сломалось.
+ */
+private const val INSTALL_SILENT =
+    "Ставлю обновление. Окна не будет — всё идёт само."
 
 /** Как часто спрашивать, не выдано ли разрешение на установку. */
 private const val PERMISSION_STEP_MS = 1000L
@@ -329,7 +340,6 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
     var resetAsked by remember { mutableStateOf(false) }
-    var clearAsked by remember { mutableStateOf(false) }
 
     // Проверка обновления идёт в сети: пока она идёт, кнопка говорит об этом
     // сама — молчащая кнопка читается как «нажал, и ничего не случилось».
@@ -559,7 +569,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 is Update.Get.Ready -> {
                     downloading = false
                     downloaded = true
-                    announce("Сборка скачана. Кнопка «установить обновление» — ниже.")
+                    announce("Сборка скачана. Строка «установить обновление» — ниже.")
                 }
 
                 // Гонка двух загрузок: вторая ничего не делает, и говорить о
@@ -599,6 +609,28 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     }
 
     /**
+     * Попросить разрешение на установку — и продолжить установку самому.
+     *
+     * Просим в тот момент, когда оно понадобилось: и по нажатию на
+     * обновление, и при входе в настройки, если новая сборка уже нашлась.
+     * Просьба без дела была бы надоеданием, а без просьбы кнопка молчит —
+     * ровно это и случилось 20.09: нажала, и на экране ничего.
+     */
+    fun askPermission(release: Update.Release, ask: Intent = Update.permissionIntent(context)) {
+        sayThen(INSTALL_PERMISSION) {
+            val shown = runCatching { context.startActivity(ask) }
+            if (shown.isSuccess) {
+                awaiting = release
+            } else {
+                announce(
+                    "Системный экран разрешения не открылся: " +
+                        "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.",
+                )
+            }
+        }
+    }
+
+    /**
      * Заход к установщику. Сначала объяснение, потом системное окно.
      *
      * [resumed] — это продолжение после выданного разрешения: объяснять, что
@@ -606,6 +638,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      */
     fun install(release: Update.Release, resumed: Boolean = false) {
         when (val ready = Update.install(context, release)) {
+            // Тихая дорога: окна не будет, и это единственное, что игроку
+            // надо знать, — он ждёт окно, а его не будет.
+            is Update.Install.Silent -> announce(INSTALL_SILENT)
+
             is Update.Install.Ready -> sayThen(if (resumed) INSTALL_RESUMED else INSTALL_EXPLANATION) {
                 Journal.note(
                     "обновление",
@@ -625,19 +661,41 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             // один раз и на своём экране. Ведём туда сразу — иначе кнопка
             // выглядела бы сломанной: нажал, и ничего. А вернувшись оттуда,
             // игрок не должен искать кнопку заново: за ним следят ([awaiting]).
-            is Update.Install.NeedsPermission -> sayThen(INSTALL_PERMISSION) {
-                val shown = runCatching { context.startActivity(ready.intent) }
-                if (shown.isSuccess) {
-                    awaiting = release
-                } else {
-                    announce(
-                        "Системный экран разрешения не открылся: " +
-                            "${shown.exceptionOrNull()?.message ?: "причина неизвестна"}.",
-                    )
-                }
-            }
+            is Update.Install.NeedsPermission -> askPermission(release, ready.intent)
 
             is Update.Install.Failed -> announce("Установить не вышло: ${ready.reason}.")
+        }
+    }
+
+    /**
+     * Довести найденную сборку до установки: скачать, если ещё не скачана, и
+     * отдать установщику.
+     *
+     * [afterPermission] — продолжение после выданного разрешения: игрок уже
+     * слышал, что за окно и что в нём, и второй раз объяснять незачем.
+     */
+    fun installFound(release: Update.Release, afterPermission: Boolean = false) {
+        scope.launch {
+            fresh = release
+            if (!downloaded) {
+                when (val got = withContext(Dispatchers.IO) { Update.download(context, release) }) {
+                    is Update.Get.Ready -> downloaded = true
+
+                    Update.Get.Busy -> {
+                        checking = false
+                        announce("Новая версия ${release.title} уже скачивается.")
+                        return@launch
+                    }
+
+                    is Update.Get.Failed -> {
+                        checking = false
+                        announce("Новая версия ${release.title} есть, но скачать не вышло: ${got.reason}.")
+                        return@launch
+                    }
+                }
+            }
+            checking = false
+            install(release, resumed = afterPermission)
         }
     }
 
@@ -651,7 +709,10 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             waited += PERMISSION_STEP_MS
             if (Update.canInstall(context)) {
                 awaiting = null
-                install(release, resumed = true)
+                // Продолжаем с того места, где остановились, а не с установки:
+                // сборка могла в это время ещё скачиваться, и «ставить» её
+                // было бы нечем.
+                installFound(release, afterPermission = true)
                 return@LaunchedEffect
             }
         }
@@ -672,9 +733,17 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 downloaded = withContext(Dispatchers.IO) { Update.hasDownloaded(context, found.release) }
                 Journal.note("обновление", "вышла ${found.release.title}, скачана: $downloaded")
                 when {
+                    // Разрешения на установку нет — просим сразу и доводим дело
+                    // до установки сами. Так просьба приходит в тот момент,
+                    // когда она по делу, и приложение о ней не забывает: без
+                    // разрешения нажатие на строку обновления не показало бы
+                    // ничего (Катерина, 20.09: «у меня системный установщик не
+                    // открывается, возможно не хватает каких-то разрешений»).
+                    !Update.canInstall(context) -> askPermission(found.release)
+
                     downloaded -> announce(
                         "Вышла новая версия ${found.release.title}, она уже скачана. " +
-                            "Кнопка «установить обновление» — ниже.",
+                            "Строка «установить обновление» — ниже: она поставит сборку сама.",
                     )
 
                     Update.isUnmetered(context) -> {
@@ -684,7 +753,7 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
                     else -> announce(
                         "Вышла новая версия ${found.release.title}. " +
-                            "Кнопка «скачать обновление» — ниже.",
+                            "Строка «скачать обновление» — ниже.",
                     )
                 }
             }
@@ -704,39 +773,44 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
      * попросил, поэтому и скачиваем сразу, не глядя на сеть, — спрашивать про
      * мобильную сеть у того, кто сам нажал, значит отвечать отказом на
      * просьбу. При входе в меню наоборот: там про сборку игрока не спрашивали.
+     *
+     * Нажатие доводит дело до конца — до установки. Строку нажимают затем,
+     * чтобы новая сборка встала, а не затем, чтобы узнать, что она есть и что
+     * поставить её можно другой строкой (Катерина, 20.09: «я нажимаю по строке
+     * проверить обновление, оно само проверяло, само скачивало и само
+     * ставило»).
      */
     fun checkUpdate() {
         if (checking) return
         checking = true
         scope.launch {
-            val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }
-            val said = when (found) {
-                is Update.Check.Fresh -> {
-                    val release = found.release
-                    // Кнопка установки появляется по этой же находке: проверка
-                    // для того и нажата, чтобы довести дело до новой сборки.
-                    fresh = release
-                    when (val got = withContext(Dispatchers.IO) { Update.download(context, release) }) {
-                        is Update.Get.Ready -> {
-                            downloaded = true
-                            "Есть новая версия ${release.title}, она уже скачана. " +
-                                "Кнопка «установить обновление» — ниже."
-                        }
+            when (val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }) {
+                is Update.Check.Fresh -> installFound(found.release)
 
-                        Update.Get.Busy -> "Новая версия ${release.title} уже скачивается."
-
-                        is Update.Get.Failed ->
-                            "Новая версия ${release.title} есть, но скачать не вышло: ${got.reason}."
-                    }
+                Update.Check.Current -> {
+                    checking = false
+                    announce("Установлена последняя версия, сборка ${BuildConfig.VERSION_CODE}.")
                 }
 
-                Update.Check.Current ->
-                    "Установлена последняя версия, сборка ${BuildConfig.VERSION_CODE}."
-
-                is Update.Check.Failed -> "Не вышло проверить обновление: ${found.reason}."
+                is Update.Check.Failed -> {
+                    checking = false
+                    // Если приложению закрыт доступ к сети, чинится это только
+                    // в разрешениях телефона — и вести туда надо сразу, иначе
+                    // игрок остаётся с отказом и без подсказки, где искать.
+                    val blocked = found.network && Update.networkIsUp(context)
+                    announce(
+                        "Не вышло проверить обновление: ${found.reason}." +
+                            if (blocked) {
+                                " Открою настройки приложения — доступ к интернету выдаётся там."
+                            } else {
+                                ""
+                            },
+                    )
+                    if (blocked) {
+                        runCatching { context.startActivity(Update.appSettingsIntent(context)) }
+                    }
+                }
             }
-            checking = false
-            announce(said)
         }
     }
 
@@ -1307,16 +1381,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 }
             }
 
-            SettingButton(if (clearAsked) "Нажми ещё раз — журнал очистится" else "Очистить журнал") {
-                if (clearAsked) {
-                    Journal.clear()
-                    journalSize = "пусто"
-                    clearAsked = false
-                    announce("Журнал очищен.")
-                } else {
-                    clearAsked = true
-                    announce("Нажми ещё раз, и журнал очистится. Сейчас в нём $journalSize.")
-                }
+            // Чистится одним нажатием, без «нажми ещё раз» (Катерина, 20.09):
+            // журнал — её же след, и лишний вопрос на пути только мешает.
+            SettingButton("Очистить журнал") {
+                Journal.clear()
+                journalSize = "пусто"
+                announce("Журнал очищен.")
             }
         }
 

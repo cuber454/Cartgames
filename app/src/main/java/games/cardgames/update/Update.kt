@@ -1,12 +1,17 @@
 package games.cardgames.update
 
+import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.IntentSender
+import android.content.pm.PackageInstaller
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import games.cardgames.diag.Journal
 import java.io.File
@@ -147,8 +152,16 @@ object Update {
         /** Установлена последняя: говорить нечего. */
         data object Current : Check
 
-        /** Спросить не вышло — и вот почему. Молчать об этом нельзя. */
-        data class Failed(val reason: String) : Check
+        /**
+         * Спросить не вышло — и вот почему. Молчать об этом нельзя.
+         *
+         * [network] — отказ от того, что приложению закрыт доступ к сети:
+         * имена не разрешаются вовсе. Это не беда дороги и не беда сервера, и
+         * лечится оно в разрешениях телефона, а не в приложении, — поэтому
+         * такой отказ называется вслух и ведёт на экран разрешений
+         * ([appSettingsIntent]).
+         */
+        data class Failed(val reason: String, val network: Boolean = false) : Check
     }
 
     /** Чем кончилось скачивание. */
@@ -164,6 +177,15 @@ object Update {
 
     /** Чем кончился заход к установщику. */
     sealed interface Install {
+        /**
+         * Установка пошла сама, без системного окна: сборка отдана системе
+         * сессией установщика, и она ставит её молча.
+         *
+         * Итог придёт приёмнику ([InstallResultReceiver]) — оттуда его и
+         * услышит игрок, при следующем входе в игру.
+         */
+        data class Silent(val session: Int) : Install
+
         /**
          * Намерение готово: осталось показать системный экран установки.
          *
@@ -256,17 +278,21 @@ object Update {
                 trouble += "${road.name}: файл обновления не разобрался"
                 continue
             }
-            Journal.note("обновление", "новость о сборке взята дорогой «${road.name}»")
+            Journal.note("обновление", "новость о сборке взята дорогой «${road.name}», ${phone()}")
             return if (isNewer(release, localVersionCode)) Check.Fresh(release) else Check.Current
         }
-        Journal.note("обновление", "ни одна дорога не ответила: ${trouble.joinToString("; ")}")
+        Journal.note(
+            "обновление",
+            "ни одна дорога не ответила (${phone()}): ${trouble.joinToString("; ")}",
+        )
         return Check.Failed(
-            if (namesUnresolved) {
+            reason = if (namesUnresolved) {
                 "телефон не находит ни одного адреса — проверь, открыт ли приложению интернет " +
                     "в разрешениях телефона"
             } else {
                 "ни одна дорога не ответила"
             },
+            network = namesUnresolved,
         )
     }
 
@@ -368,11 +394,22 @@ object Update {
         apkFile(context, release).let { it.isFile && it.length() > 0L }
 
     /**
-     * Отдать скачанную сборку системному установщику.
+     * Отдать скачанную сборку на установку.
      *
-     * Дверь наружу — тот же [FileProvider], что и у журнала, но со своим
-     * корнем: журнал лежит в памяти приложения, сборка — в кэше, и открывать
-     * наружу сразу оба каталога незачем.
+     * Дороги две, и выбирает их не приложение, а телефон.
+     *
+     * **Тихая** — с Android 12: сборка уходит системе сессией установщика, и
+     * система ставит её сама, ни о чём не спрашивая игрока. Так можно только
+     * тому, кто обновляет сам себя, и только с разрешением
+     * `UPDATE_PACKAGES_WITHOUT_USER_ACTION` (см. манифест). Это ровно наш
+     * случай: приложение тянет свою же сборку. До Android 12 такой дороги нет
+     * вовсе, и система просьбу проигнорирует.
+     *
+     * **Через окно** — как было раньше: системный установщик показывает экран
+     * «Установить», игрок нажимает. Так идёт установка на старых Android, и
+     * так же кончается тихая дорога, если система решит, что молча ставить
+     * нельзя: сессия ответит «нужно действие игрока», а приёмник откроет окно
+     * ([InstallResultReceiver]).
      */
     fun install(context: Context, release: Release): Install {
         val apk = apkFile(context, release)
@@ -381,17 +418,110 @@ object Update {
             Journal.note("обновление", "ставим нельзя: разрешение на установку из приложения не выдано")
             return Install.NeedsPermission(permissionIntent(context))
         }
-        return runCatching {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            Install.Ready(intent, installerOf(context, intent))
-        }.getOrElse {
-            Journal.note("обновление", "намерение установки не собралось: ${it.message ?: it.javaClass.simpleName}")
-            Install.Failed(it.message ?: it.javaClass.simpleName)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val silent = runCatching { startSilent(context, release, apk) }
+            silent.getOrNull()?.let { return it }
+            // Тихая дорога сорвалась — не приговор: системное окно работает
+            // на любом Android, и игрок получит установку им. Но причину в
+            // журнал: без неё по одной этой неудаче не понять, чего не хватило.
+            Journal.note(
+                "обновление",
+                "тихая установка не пошла: " +
+                    "${silent.exceptionOrNull()?.message ?: silent.exceptionOrNull()?.javaClass?.simpleName ?: "причина неизвестна"}",
+            )
         }
+        return window(context, apk)
+    }
+
+    /**
+     * Тихая установка: открыть сессию установщика, положить в неё сборку и
+     * поручить дело системе.
+     *
+     * `setRequireUserAction(USER_ACTION_NOT_REQUIRED)` — просьба не спрашивать
+     * игрока. Система её послушается, только если сошлись все её условия
+     * (Android 12+, приложение обновляет само себя, разрешение на руках); не
+     * сошлись — она не откажет, а пришлёт ответ «нужно действие игрока», и
+     * приёмник откроет окно. Молчание тут ничего не отменяет.
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun startSilent(context: Context, release: Release, apk: File): Install {
+        val sessions = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(
+            PackageInstaller.SessionParams.MODE_FULL_INSTALL,
+        ).apply {
+            setAppPackageName(context.packageName)
+            setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
+
+        val id = sessions.createSession(params)
+        try {
+            sessions.openSession(id).use { session ->
+                session.openWrite("base.apk", 0, apk.length()).use { output ->
+                    apk.inputStream().use { input -> input.copyTo(output) }
+                    // Запись без этой строки система может не увидеть целиком:
+                    // сессия живёт в другом процессе, и хвост файла до неё не
+                    // доходит, пока его не сбросят на диск.
+                    session.fsync(output)
+                }
+                session.commit(resultSender(context, id))
+            }
+        } catch (e: Exception) {
+            runCatching { sessions.abandonSession(id) }
+            throw e
+        }
+
+        Journal.note(
+            "обновление",
+            "установка пошла сама, без окна: сессия $id, ${phone()}",
+        )
+        return Install.Silent(id)
+    }
+
+    /**
+     * Версия Android — в журнал рядом с каждой записью об обновлении.
+     *
+     * Не украшение: от неё зависит, какая дорога установки вообще возможна
+     * (тихая — только с Android 12), и по журналу это первое, что нужно
+     * знать. Раньше её в записях не было, и по журналу нельзя было понять,
+     * чего телефон не умеет.
+     */
+    private fun phone(): String = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+
+    /**
+     * Куда система сообщит, чем кончилась сессия.
+     *
+     * Намерение обязано быть изменяемым (`FLAG_MUTABLE`): итог установки
+     * система дописывает в него сама, а в неизменяемое дописать нечего — и
+     * ответ пропал бы вместе с намерением.
+     */
+    @SuppressLint("UnspecifiedImmutableFlag")
+    private fun resultSender(context: Context, sessionId: Int): IntentSender {
+        val result = Intent(context, InstallResultReceiver::class.java)
+            .setAction(InstallResultReceiver.ACTION_RESULT)
+            .putExtra(InstallResultReceiver.EXTRA_SESSION, sessionId)
+        return PendingIntent.getBroadcast(
+            context,
+            sessionId,
+            result,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        ).intentSender
+    }
+
+    /**
+     * Системное окно установки: сборка уезжает установщику файловой ссылкой, и
+     * он спрашивает игрока сам.
+     */
+    private fun window(context: Context, apk: File): Install = runCatching {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        Install.Ready(intent, installerOf(context, intent))
+    }.getOrElse {
+        Journal.note("обновление", "намерение установки не собралось: ${it.message ?: it.javaClass.simpleName}")
+        Install.Failed(it.message ?: it.javaClass.simpleName)
     }
 
     /**
@@ -423,10 +553,39 @@ object Update {
         )
 
     /**
+     * Системный экран самого приложения: там видно всё, что ему разрешено, — в
+     * том числе доступ к интернету.
+     *
+     * Разрешения на интернет в списке выдачи нет: оно даётся при установке и
+     * отзывается не диалогом, а этим экраном. Программа не может попросить его
+     * сама — она может только заметить, что сети нет, назвать это вслух и
+     * привести игрока туда, где это чинится.
+     */
+    fun appSettingsIntent(context: Context): Intent =
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}"),
+        )
+
+    /**
      * Идёт ли скачивание именно сейчас. По этому кнопка меняет подпись, а
      * повторный заход не начинает вторую загрузку.
      */
     fun isDownloading(): Boolean = downloading
+
+    /**
+     * Есть ли сеть у самого телефона.
+     *
+     * Это не то же самое, что «приложению открыт интернет»: в самолёте имена
+     * не разрешаются у всех приложений разом, и виновата тут не программа.
+     * Разница решает, куда вести игрока: при живом телефоне и неразрешающихся
+     * именах причина лежит в разрешениях, а без сети в разрешениях чинить
+     * нечего — там её просто нет.
+     */
+    fun networkIsUp(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        manager?.activeNetwork != null
+    }.getOrDefault(false)
 
     /**
      * Есть ли сеть и не мобильная ли она.
@@ -453,6 +612,38 @@ object Update {
     private fun readText(url: String): String = withConnection(url) { connection ->
         connection.inputStream.bufferedReader().use { it.readText() }
     }
+
+    // --- Что сказать об установке, которая шла без нас ----------------------
+
+    /**
+     * Запомнить, чем кончилась установка, которую доводила система.
+     *
+     * Записываем, а не говорим: сессию кончает система, и ответ приходит
+     * приёмнику ([InstallResultReceiver]), у которого нет ни экрана, ни
+     * синтезатора. Слова дождутся следующего входа в игру ([takeOutcome]) —
+     * в этот момент игрок как раз смотрит, что стало с приложением.
+     */
+    fun rememberOutcome(context: Context, text: String) {
+        prefs(context).edit().putString(OUTCOME_KEY, text).apply()
+    }
+
+    /**
+     * Забрать записанное и стереть: сказанное дважды — не сказанное.
+     * null — говорить нечего.
+     */
+    fun takeOutcome(context: Context): String? {
+        val stored = prefs(context).getString(OUTCOME_KEY, null)
+        if (stored.isNullOrBlank()) return null
+        prefs(context).edit().remove(OUTCOME_KEY).apply()
+        return stored
+    }
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private const val PREFS_NAME = "update-outcome"
+    private const val OUTCOME_KEY = "last"
+
 
     /**
      * Сходить по ссылке и отдать ответ. Сроки короткие: проверка идёт в
