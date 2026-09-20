@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Значок для Android 7 (minSdk = 24): адаптивных значков там ещё нет, и маску
+  никто не накладывает — значит, сукно и карты лежат одним слоем. Слоями, а не
+  одной картинкой, потому что цвет сукна и рисунок уже есть по отдельности
+  (@color/ic_launcher_background и @drawable/ic_launcher_foreground), и второй
+  их копии держать не за чем.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/ic_launcher_background" />
+    <item android:drawable="@drawable/ic_launcher_foreground" />
+</layer-list>
