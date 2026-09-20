@@ -936,7 +936,7 @@ private fun ownMovePhrase(move: DurakMove, gender: Gender): String = when (move)
     is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться соседу."
     DurakMove.Take -> "Ты забираешь карты со стола."
     // Единственное место в фразе о ходе, где слышен род: остальные — настоящее
-    // время, и в нём «ты» звучит одинаково для обоих (SETTINGS.md, 13).
+    // время, и в нём «ты» звучит одинаково для обоих (SETTINGS.md, 8).
     DurakMove.Pass -> "Ты ${gender.past("сказал")} бито. Стол в отбой."
 }
 
