@@ -421,7 +421,22 @@ fun KozelScreen(
             }
 
             val seat = round.turn
-            if (seat == PLAYER) break
+            if (seat == PLAYER) {
+                // Ходить нечем и базар пуст — ход пропускается по правилу, а
+                // не по решению игрока: выбора у него нет, и спрашивать его
+                // нажатием тут не о чем. Раньше игра на этом вставала и
+                // говорила «твой ход», а ход был ровно один и не в руке
+                // (Катерина, 20.09: «пускай она завершает тогда, не ждёт»).
+                if (round.legalMoves(PLAYER).singleOrNull() != KozelMove.Pass) break
+                round.apply(PLAYER, KozelMove.Pass)
+                // Говорим вслух обязательно и своим голосом: игрок хода не
+                // делал, кнопки не нажимал, и объявить о пропуске, кроме этих
+                // слов, некому. Звука хода тут нет — кости никто не касался.
+                voice.sayOwnMove(ownMovePhrase(KozelMove.Pass, round, false), aloud = true)
+                session.persist()
+                played = true
+                continue
+            }
 
             // Ждём не «полсекунды», а пока договорит предыдущая фраза: иначе
             // бот перебивает сам себя и слышно только последнее слово.
@@ -775,20 +790,19 @@ fun KozelScreen(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Кнопки не прячем, а гасим: исчезающая кнопка сдвигает соседние,
-            // и рука каждый раз ищет их заново. В каждый момент жива ровно
-            // одна из двух: ходить нечем — либо берут из базара, либо
-            // пропускают, и решает это правило, а не игрок.
+            // Кнопка не прячется, а гаснет: исчезающая сдвигает соседние, и
+            // рука каждый раз ищет их заново.
+            //
+            // Берут из базара нажатием, а пропуск игра делает сама (см. цикл
+            // за столом): пропуск — не выбор, а тупик, и спрашивать о нём
+            // нажатием нечего. Кнопки «Пропустить» здесь поэтому нет вовсе:
+            // она была бы всегда погашенной и читалась бы как «нажми меня»,
+            // когда нажимать уже нечего.
             Button(
                 onClick = { play(KozelMove.Draw) },
                 enabled = moves.contains(KozelMove.Draw),
                 modifier = Modifier.weight(1f),
             ) { Text("Из базара") }
-            Button(
-                onClick = { play(KozelMove.Pass) },
-                enabled = moves.contains(KozelMove.Pass),
-                modifier = Modifier.weight(1f),
-            ) { Text("Пропустить") }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -1069,7 +1083,11 @@ private fun noMoveHint(round: KozelRound): String {
     val moves = round.legalMoves(PLAYER)
     return when {
         moves.contains(KozelMove.Draw) -> " Ходить нечем, бери из базара."
-        moves.contains(KozelMove.Pass) -> " Ходить нечем, ход придётся пропустить."
+        // Пропуск игра делает сама, и делает сразу: эта строка успевает
+        // мелькнуть только тем кадром, что лёг между ходом и пропуском.
+        // Поэтому она в настоящем времени — про то, что вот-вот случится, а
+        // не про то, чего от игрока ждут.
+        moves.contains(KozelMove.Pass) -> " Ходить нечем, ход пропускается."
         else -> ""
     }
 }
@@ -1129,7 +1147,11 @@ private fun allowedPhrase(round: KozelRound, names: List<String>): String {
         parts += "положить обе: ${both.left.spoken()} и ${both.right.spoken()}"
     }
     if (moves.contains(KozelMove.Draw)) parts += "взять из базара"
-    if (moves.contains(KozelMove.Pass)) parts += "пропустить ход"
+    // Пропуск не называем: его игра делает сама, и «можно пропустить ход»
+    // предлагало бы нажать то, чего не нажимают. Спросить про это можно
+    // только тем кадром, что лёг между ходом и пропуском, — и тогда честный
+    // ответ не «можно», а «сейчас пропустится».
+    if (moves.contains(KozelMove.Pass)) return "Ходить нечем, ход пропускается."
     return "Можно: " + parts.joinToString(", ") + "."
 }
 
