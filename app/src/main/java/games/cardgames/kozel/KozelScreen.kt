@@ -526,7 +526,10 @@ fun KozelScreen(
         append(
             when {
                 round.finished -> "Раунд кончился."
-                moves.isNotEmpty() -> "Твой ход."
+                // Строка на экране повторяет сказанное: тот, кто читает её
+                // скринридером, иначе услышал бы «твой ход» и пошёл щупать
+                // руку, где ни одна кость не подходит.
+                moves.isNotEmpty() -> "Твой ход." + noMoveHint(round)
                 // «Ход соперника», а не по имени: «ход Пети» — падеж, а
                 // склонять произвольное имя программа не умеет; на троих же
                 // «соперник» не говорит, кого ждать, поэтому там имя стоит
@@ -1037,15 +1040,39 @@ private fun resumePhrase(
 }
 
 private fun turnPhrase(round: KozelRound, names: List<String>): String = when {
-    round.legalMoves(PLAYER).isNotEmpty() -> "Твой ход."
+    round.legalMoves(PLAYER).isNotEmpty() -> "Твой ход." + noMoveHint(round)
     // «Ход соперника», а не по имени: «ход Пети» — падеж. На троих, где
     // соперников двое, имя стоит подлежащим — «Ходит Петя» (SETTINGS.md, 8).
     round.seats <= 2 -> "Ход соперника."
     else -> "Ходит ${names[round.turn]}."
 }
 
-/** Концы линии вслух, когда ход вернулся к игроку. */
-private fun endsPhrase(round: KozelRound): String = "${round.spokenEnds()}. $TURN_PHRASE"
+/**
+ * Концы линии вслух, когда ход вернулся к игроку.
+ *
+ * Ходить нечем — договариваем здесь же, а не молчим (Катерина, 20.09:
+ * «чтобы он не молчал, а давал подсказку»). «Твой ход» само по себе
+ * отправляет игрока щупать руку, где ни одна кость не подходит, — а ход у
+ * него ровно один, и он не в руке.
+ */
+private fun endsPhrase(round: KozelRound): String =
+    "${round.spokenEnds()}. $TURN_PHRASE" + noMoveHint(round)
+
+/**
+ * Договорка к «твой ход», когда ходить нечем: ход ровно один, и он не в руке.
+ *
+ * Спрашивается у правил, а не угадывается по руке: «взять из базара» и
+ * «пропустить» — это разные тупики, и пустой базар надо назвать тупиком, а
+ * не поломкой. Пусто — ход есть, и объяснять нечего.
+ */
+private fun noMoveHint(round: KozelRound): String {
+    val moves = round.legalMoves(PLAYER)
+    return when {
+        moves.contains(KozelMove.Draw) -> " Ходить нечем, бери из базара."
+        moves.contains(KozelMove.Pass) -> " Ходить нечем, ход придётся пропустить."
+        else -> ""
+    }
+}
 
 /** Почему костью не пройти — ответ на нажатие. */
 private fun refusalPhrase(round: KozelRound, names: List<String>): String = when {
