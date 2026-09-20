@@ -11,3 +11,4 @@ package games.cardgames
 const val GAME_DURAK = "durak"
 const val GAME_THOUSAND = "thousand"
 const val GAME_KOZEL = "kozel"
+const val GAME_HUNDRED = "hundred"
