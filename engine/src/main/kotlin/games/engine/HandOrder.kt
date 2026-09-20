@@ -40,6 +40,21 @@ enum class HandOrder(val title: String) {
         )
     }
 
+    /**
+     * Тот же порядок, но для игры без козыря — в «101» козыря нет вовсе.
+     *
+     * Два козырь-зависимых порядка при этом схлопываются в два простых:
+     * «по масти, козыри в конце» становится «по масти», а «козыри вперёд» —
+     * тем же «по масти», потому что впереди всех мастей козырю взяться
+     * неоткуда. Молча подставить сюда какую-нибудь масть было бы хуже: рука
+     * встала бы не по правилу, а по случайности, и на другой раз — иначе.
+     */
+    fun sort(cards: List<Card>): List<Card> = when (this) {
+        BY_SUIT, TRUMPS_FIRST -> cards.sortedWith(compareBy({ it.suit.ordinal }, { it.rank.value }))
+        BY_RANK, BY_RANK_TRUMPS_LAST ->
+            cards.sortedWith(compareBy({ it.rank.value }, { it.suit.ordinal }))
+    }
+
     /** Следующий порядок по кругу — для кнопки «Порядок». */
     fun next(): HandOrder = entries[(ordinal + 1) % entries.size]
 

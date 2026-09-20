@@ -35,11 +35,14 @@ import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
 import games.cardgames.durak.loadDurakRules
+import games.cardgames.hundred.HundredScreen
+import games.cardgames.hundred.HundredSession
 import games.cardgames.kozel.KozelScreen
 import games.cardgames.kozel.KozelSession
 import games.cardgames.kozel.loadKozelRules
 import games.cardgames.rules.RulesScreen
 import games.cardgames.rules.durakRules
+import games.cardgames.rules.hundredRules
 import games.cardgames.rules.kozelRules
 import games.cardgames.rules.thousandRules
 import games.cardgames.score.loadScore
@@ -115,6 +118,7 @@ private fun App() {
     val session = remember { DurakSession(context) }
     val thousand = remember { ThousandSession(context) }
     val kozel = remember { KozelSession(context) }
+    val hundred = remember { HundredSession(context) }
 
     // Что видит скринридер на открывшемся экране — в журнал. Это ответ на
     // «кнопка есть, а он её не читает»: в записи видно каждое имя, которое до
@@ -173,6 +177,13 @@ private fun App() {
             onRules = { openRules("kozel", GAME_KOZEL) },
         )
 
+        "hundred" -> HundredScreen(
+            session = hundred,
+            onExit = { screen = "games" },
+            onSettings = { openSettings("hundred") },
+            onRules = { openRules("hundred", GAME_HUNDRED) },
+        )
+
         // Чьи настройки открывать: из списка игр — только общие, из-за стола —
         // с правилами и соперником этой игры (SETTINGS.md, 2).
         "settings" -> SettingsScreen(
@@ -181,6 +192,12 @@ private fun App() {
         )
 
         "rules" -> when (rulesGame) {
+            GAME_HUNDRED -> RulesScreen(
+                title = "101",
+                sections = hundredRules,
+                onExit = { screen = rulesBack },
+            )
+
             GAME_KOZEL -> RulesScreen(
                 title = "Козёл",
                 sections = kozelRules,
@@ -212,6 +229,7 @@ private fun App() {
                 when (askedGame) {
                     GAME_KOZEL -> kozel.restart(rules = loadKozelRules(context))
                     GAME_THOUSAND -> thousand.restart()
+                    GAME_HUNDRED -> hundred.restart()
                     else -> session.restart(rules = loadDurakRules(context))
                 }
                 screen = askedGame
@@ -224,6 +242,7 @@ private fun App() {
             session = session,
             thousand = thousand,
             kozel = kozel,
+            hundred = hundred,
             onGame = { game, paused ->
                 if (paused) {
                     askedGame = game
@@ -250,6 +269,7 @@ private fun GamesScreen(
     session: DurakSession,
     thousand: ThousandSession,
     kozel: KozelSession,
+    hundred: HundredSession,
     onGame: (String, Boolean) -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -275,6 +295,11 @@ private fun GamesScreen(
     // никто не набрал до цели.
     val kozelPaused = kozel.restored ||
         (kozel.lastPhrase.isNotBlank() && !kozel.match.over)
+    // А в «101» игрок может выбыть, и матч от этого кончается только для
+    // него: движок доигрывает за оставшихся, но спрашивать «продолжить
+    // партию?» про матч, в котором тебя больше нет, нечего.
+    val hundredPaused = hundred.restored ||
+        (hundred.lastPhrase.isNotBlank() && !hundred.overForPlayer)
 
     // Счёт партий: за ним сюда и заходят чаще, чем за настройками.
     val score = remember { loadScore(context) }
@@ -287,8 +312,9 @@ private fun GamesScreen(
             if (paused) append(" Партия в дурака не доиграна.")
             if (thousandPaused) append(" Партия в тысячу не доиграна.")
             if (kozelPaused) append(" Партия в козла не доиграна.")
+            if (hundredPaused) append(" Партия в сто одну не доиграна.")
         }
-        speaker.say("Игры. Дурак, тысяча, козёл. ${score.spoken()}$tail")
+        speaker.say("Игры. Дурак, тысяча, козёл, сто одна. ${score.spoken()}$tail")
     }
 
     // Итог установки, которую доводила система, и новость о новой сборке —
@@ -388,6 +414,15 @@ private fun GamesScreen(
             Text("Козёл")
         }
 
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = { onGame(GAME_HUNDRED, hundredPaused) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("101")
+        }
+
         Spacer(Modifier.height(16.dp))
 
         // Настройки и обновление — одной строкой внизу списка. Обновление
@@ -432,6 +467,7 @@ private fun AskScreen(
     val what = when (game) {
         GAME_KOZEL -> "козла"
         GAME_THOUSAND -> "тысячу"
+        GAME_HUNDRED -> "сто одну"
         else -> "дурака"
     }
 
