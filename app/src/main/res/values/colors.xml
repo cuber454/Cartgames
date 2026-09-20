@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Сукно под значком приложения: тот же тёмно-зелёный, что и стол за картами.
+      Отдельным цветом, а не числом в значке, — он же нужен фону адаптивного
+      значка (mipmap-anydpi-v26).
+    -->
+    <color name="ic_launcher_background">#0F5B3C</color>
+</resources>
