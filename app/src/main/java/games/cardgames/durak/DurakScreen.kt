@@ -866,17 +866,20 @@ fun DurakScreen(
             title = { Text("Ещё") },
             confirmButton = {
                 Row {
-                    // Правила держим рядом с «Настройками»: если за столом
-                    // что-то пошло не по-понятному, справка нужна на месте,
-                    // а не после выхода в меню.
-                    TextButton(onClick = { menuOpen = false; onRules() }) { Text("Правила") }
+                    // «Настройки» стоят вплотную перед «Выйти» (Катерина,
+                    // 20.09): их и ищут подряд — сперва поправить, потом уйти.
+                    // Свайп с настроек ведёт прямо на выход.
                     TextButton(onClick = { menuOpen = false; onSettings() }) { Text("Настройки") }
+                    TextButton(onClick = { menuOpen = false; onExit() }) { Text("Выйти") }
                 }
             },
             dismissButton = {
                 Row {
+                    // Правила держим рядом с «Новой партией»: если за столом
+                    // что-то пошло не по-понятному, справка нужна на месте,
+                    // а не после выхода в меню.
                     TextButton(onClick = { menuOpen = false; newGame() }) { Text("Новая партия") }
-                    TextButton(onClick = { menuOpen = false; onExit() }) { Text("Выйти") }
+                    TextButton(onClick = { menuOpen = false; onRules() }) { Text("Правила") }
                 }
             },
         )
