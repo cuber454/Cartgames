@@ -37,6 +37,17 @@ object HundredSave {
         // экран отличает «карту взял» от «колода кончилась, переворачиваем
         // стопку» — событие, которое объявляют вслух обязательно.
         appendLine("turnovers ${game.stockTurnovers()}")
+        // Непокрытая девятка. Строки нет, когда покрывать нечего, — и это не
+        // пропуск: так выглядит кон без девятки, и читается это верно.
+        // Оттого и версия формата не меняется: запись без этой строки —
+        // не старая, а обычная.
+        game.coverCard()?.let { appendLine("cover ${codeOf(it)}") }
+        // Заказ дамы: масть буквой, как и в картах. Строки нет — заказа нет,
+        // и это обычный кон: дама на кону без заказа не лежит.
+        game.orderedSuit()?.let { appendLine("order ${letterOf(it)}") }
+        // Стол, поднятый между конами: кон сыгран, раздача ещё не начата.
+        // Строки нет — раздача идёт, и это обычная запись, а не старая.
+        if (game.awaitingDeal()) appendLine("awaiting 1")
         appendLine("pile ${game.pileCards().joinToString(" ") { codeOf(it) }}")
         appendLine("stock ${game.stockCards().joinToString(" ") { codeOf(it) }}")
         for (seat in 0 until game.playerCount) {
@@ -99,6 +110,36 @@ object HundredSave {
         // Колода ровно в 36 карт: ни одна не берётся из воздуха и не исчезает.
         if (all.size != 36 || all.toSet().size != 36) return null
 
+        // Непокрытая девятка — ровно одна карта, и она обязана лежать на кону:
+        // покрывать нечего, если та карта уже ушла в чью-то руку. Строки нет —
+        // покрывать нечего, и это обычный кон, а не поломка.
+        val cover = when (val value = fields["cover"]) {
+            null -> null
+            else -> parseCards(value)?.singleOrNull() ?: return null
+        }
+        // Покрывают только девятку: другая карта в этой строке — не поломка
+        // стола, а чужая запись.
+        if (cover != null && (cover !in pile || cover.rank != Rank.NINE)) return null
+
+        // Заказ — ровно одна масть, и заказывает её только дама, лежащая
+        // верхней: заказ без дамы на кону — это запись, которой не бывает.
+        val order = when (val value = fields["order"]) {
+            null -> null
+            else -> suitOf(value) ?: return null
+        }
+        if (order != null && pile.last().rank != Rank.QUEEN) return null
+
+        // Стол между конами. Строки нет — раздача идёт: разница тут не в
+        // возрасте записи, а в том, чем кончился прежний кон, и знать её надо
+        // точно — от неё зависит, спросят игрока или раздадут молча.
+        val awaiting = when (val value = fields["awaiting"]) {
+            null -> false
+            else -> when (value.lowercase()) {
+                "1", "true" -> true
+                "0", "false" -> false
+                else -> return null
+            }
+        }
         return Hundred.restore(
             hands = hands.values.toList(),
             pile = pile,
@@ -108,6 +149,9 @@ object HundredSave {
             scores = scores,
             out = out,
             turnovers = fields["turnovers"]?.toIntOrNull() ?: 0,
+            cover = cover,
+            order = order,
+            awaiting = awaiting,
         )
     }
 
@@ -140,15 +184,18 @@ object HundredSave {
         Suit.CLUBS -> "C"
     }
 
+    /** Масть по букве — [letterOf] наоборот. */
+    private fun suitOf(token: String): Suit? = when (token.uppercase()) {
+        "S" -> Suit.SPADES
+        "H" -> Suit.HEARTS
+        "D" -> Suit.DIAMONDS
+        "C" -> Suit.CLUBS
+        else -> null
+    }
+
     private fun parseCard(token: String): Card? {
         if (token.length < 2) return null
-        val suit = when (token.takeLast(1).uppercase()) {
-            "S" -> Suit.SPADES
-            "H" -> Suit.HEARTS
-            "D" -> Suit.DIAMONDS
-            "C" -> Suit.CLUBS
-            else -> return null
-        }
+        val suit = suitOf(token.takeLast(1)) ?: return null
         val value = token.dropLast(1).toIntOrNull() ?: return null
         val rank = Rank.entries.firstOrNull { it.value == value } ?: return null
         return Card(rank, suit)

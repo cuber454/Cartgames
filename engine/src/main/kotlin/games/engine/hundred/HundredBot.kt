@@ -3,6 +3,7 @@ package games.engine.hundred
 import games.engine.Card
 import games.engine.Difficulty
 import games.engine.Rank
+import games.engine.Suit
 import games.engine.fullDeck36
 import kotlin.random.Random
 
@@ -34,12 +35,32 @@ object HundredBot {
         val plays = moves.filterIsInstance<HundredMove.Play>()
         if (plays.isEmpty()) return moves.first()
 
-        return when (difficulty) {
+        val chosen = when (difficulty) {
             Difficulty.NOVICE -> plays[random.nextInt(plays.size)]
             Difficulty.NORMAL -> plays.maxByOrNull { score(it.card, game, seat) } ?: plays.first()
             Difficulty.CLEVER -> plays.maxByOrNull { cleverScore(it.card, game, seat) }
                 ?: plays.first()
         }
+        return withOrder(chosen, game, seat, random)
+    }
+
+    /**
+     * Дама без заказа не ходит: заказ — часть хода, а не украшение. Заказывает
+     * бот ту масть, которой у него на руке больше: пока дама на кону, ходят
+     * заказом, и своя длинная масть после такого заказа как раз и остаётся при
+     * нём дольше всех.
+     *
+     * Из равных мастей выбирается случайная, а не первая по списку: иначе бот
+     * заказывал бы пики при всяком пустом раскладе, и заказ перестал бы что-то
+     * значить.
+     */
+    private fun withOrder(move: HundredMove.Play, game: Hundred, seat: Int, random: Random): HundredMove {
+        if (move.card.rank != Rank.QUEEN) return move
+        val hand = game.handOf(seat)
+        val counts = Suit.entries.map { suit -> suit to hand.count { it.suit == suit } }
+        val best = counts.maxOf { it.second }
+        val suits = counts.filter { it.second == best }.map { it.first }
+        return move.copy(order = suits[random.nextInt(suits.size)])
     }
 
     // --- Обычный уровень --------------------------------------------------

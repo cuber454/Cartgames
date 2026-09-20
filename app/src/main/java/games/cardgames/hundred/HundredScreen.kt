@@ -46,10 +46,13 @@ import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.Chatter
 import games.cardgames.speech.FIRST_BOT_SEAT
+import games.cardgames.speech.Jokes
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableEvent
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.sayEvent
 import games.cardgames.speech.speech
@@ -61,9 +64,11 @@ import games.cardgames.ui.TableGesture
 import games.cardgames.ui.tableGestures
 import games.engine.Card
 import games.engine.Rank
+import games.engine.Suit
 import games.engine.hundred.Hundred
 import games.engine.hundred.HundredBot
 import games.engine.hundred.HundredMove
+import games.engine.hundred.penaltyOf
 import games.engine.hundred.points
 import games.engine.hundred.queenPrice
 import kotlinx.coroutines.delay
@@ -121,10 +126,11 @@ private const val TABLE_SCALE = 0.75f
  * не читается.
  *
  * Отличие от других столов одно, и оно из правил: кон кончается **внутри
- * хода**. Движок, приняв последнюю карту, тут же считает очки и раздаёт
- * следующий кон, поэтому от прежнего кона на столе не остаётся ничего — ни
- * рук, ни счёта, по которому видно разницу. Экран поэтому снимает снимок
- * кона **до** хода и рассказывает по нему, что случилось; см. [ConShot].
+ * хода**. Движок, приняв последнюю карту, тут же считает очки и останавливает
+ * стол — следующую раздачу он не начинает, пока игрок не ответит, играем
+ * дальше или хватит. Но счёт за кон пересчитан уже этим ходом, и по одним
+ * рукам видно разницу не всегда: экран поэтому снимает снимок кона **до**
+ * хода и рассказывает по нему, что случилось; см. [ConShot].
  */
 @Composable
 fun HundredScreen(
@@ -232,8 +238,17 @@ fun HundredScreen(
     DisposableEffect(sounds) { onDispose { sounds.release() } }
 
     val rng = remember { Random.Default }
+    // Разговоры за столом и прибаутки — общий слой на все игры (HUNDRED_ONE.md,
+    // 4.2). Живут выше матча: реплика, сказанная до ухода в настройки, не
+    // должна прозвучать второй раз после возвращения.
+    val chatter = remember { Chatter(rng) }
+    val jokes = remember { Jokes(rng) }
     // Открыто ли маленькое меню «Ещё» в углу экрана.
     var menuOpen by remember { mutableStateOf(false) }
+    // Дама, ждущая заказа: ход уже выбран, осталось назвать масть. Держим
+    // карту, а не флаг: заказ бывает только у дамы, и по ней же видно, чей
+    // это будет ход.
+    var orderFor by remember { mutableStateOf<Card?>(null) }
 
     val scale = if (settings.largeText) LARGE_SCALE else 1f
     val cardWidth: Dp = (CARD_WIDTH * scale).dp
@@ -283,6 +298,41 @@ fun HundredScreen(
     }
 
     /**
+     * Разговор за столом — о даме.
+     *
+     * Дама здесь единственное событие, о котором стол молчит: ход назван, счёт
+     * пересчитан, а что дама дорога и что она на выходе — это за столом говорят
+     * вслух (HUNDRED_ONE.md, 4.2). Дама, которой кон и заканчивается,
+     * объявляется отдельно ([conPhrase]) — здесь речь о той, что легла по ходу.
+     *
+     * [own] — даму положил сам говорящий: о своём говорят «я», о чужом — со
+     * стороны, и слова там разные ([TableEvent]).
+     *
+     * Слота хватает одной реплике на кон: [Chatter.newRound] зовётся на новой
+     * раздаче, а дам в колоде четыре, и на каждую стол не разговаривается.
+     */
+    fun talk(event: TableEvent, own: Boolean, seat: Int) {
+        if (!settings.botTalk || !settings.tableTalk) return
+        val line = chatter.line(event, own) ?: return
+        // lastPhrase не трогаем: «Повтори» повторяет ход, а не разговор.
+        voice.sayBot(line, seat = seat, afterMs = voice.waitMs())
+    }
+
+    /**
+     * Прибаутка после матча — второй фразой, тем же голосом: стола уже нет, и
+     * говорить о партии, кроме приложения, некому ([Jokes]).
+     *
+     * Зовётся тем ходом, которым матч кончился, — и только им: слот тут
+     * занимает не [Chatter], а сам ход, и второго конца у матча не бывает.
+     */
+    fun jokeAfter(game: Hundred) {
+        if (!settings.matchJokes) return
+        if (!game.finished && !game.isOut(PLAYER)) return
+        val joke = jokes.afterMatch(won = game.winner == PLAYER, gender = settings.playerGender)
+        voice.say(joke, afterMs = voice.waitMs())
+    }
+
+    /**
      * Чья это будет фраза и как её позвать.
      *
      * Имя нужно только там, где фразу читает скринридер, и только на троих: у
@@ -327,18 +377,30 @@ fun HundredScreen(
 
         val shot = ConShot.take(game, seat = PLAYER, move = move)
         val turnoversBefore = game.stockTurnovers()
+        // Девятка, которую игрок покрывал до этого хода: после добора она
+        // может исчезнуть — покрывать стало нечем, и об этом надо сказать.
+        val coverBefore = game.coverCard()
         game.apply(PLAYER, move)
 
         val text = buildString {
-            append(ownMovePhrase(move, game))
+            append(ownMovePhrase(move, game, coverBefore))
             if (shot != null) {
                 append(" ")
                 append(conPhrase(shot, game, names))
                 append(" ")
                 append(afterConPhrase(game, names))
-            } else if (game.stockTurnovers() > turnoversBefore) {
-                append(" ")
-                append(TURNOVER_PHRASE)
+            } else {
+                // Кон не кончился — значит, карта ещё и бьёт по следующему:
+                // штраф берут именно за неё, и объявить его надо здесь, а не
+                // после конца кона, где он уже ни при чём.
+                if (move is HundredMove.Play) {
+                    append(penaltyPhrase(move.card, game, PLAYER, names))
+                    append(coverPhrase(PLAYER, move.card, names))
+                }
+                if (game.stockTurnovers() > turnoversBefore) {
+                    append(" ")
+                    append(TURNOVER_PHRASE)
+                }
             }
         }
         // Свой ход звучит так же, как у соперника: сначала карта, потом слово.
@@ -350,15 +412,36 @@ fun HundredScreen(
             // а не то, что из колоды пришло.
             aloud = move is HundredMove.Draw,
         )
+        // Даму положил игрок — о ней говорит стол: сам он о своём ходе уже
+        // сказал, и повторять за ним нечего (HUNDRED_ONE.md, 4.2).
+        if (move is HundredMove.Play && move.card.rank == Rank.QUEEN) {
+            talk(TableEvent.QUEEN, own = false, seat = FIRST_BOT_SEAT)
+        }
         session.persist()
+        // Кон кончился — за столом можно начинать разговор заново: конец кона
+        // и есть новая раздача, и в ней снова есть о чём сказать.
+        if (shot != null) chatter.newRound()
+        jokeAfter(game)
         session.tick++
     }
 
     fun playCard(card: Card) {
         val game = session.match
-        val move = game.legalMoves(PLAYER)
+        val play = game.legalMoves(PLAYER)
             .filterIsInstance<HundredMove.Play>()
-            .firstOrNull { it.card == card }
+            .filter { it.card == card }
+
+        // Дама ходит с заказом, а заказ — выбор игрока, а не приложения:
+        // сперва спрашиваем масть, и только потом кладём карту. Заказ
+        // говорится вслух сразу — его игрок и будет про себя держать, пока
+        // дама лежит на кону.
+        if (play.any { it.order != null }) {
+            orderFor = card
+            voice.sayRequested(ORDER_QUESTION)
+            return
+        }
+
+        val move = play.firstOrNull()
         if (move == null) {
             // Отказ — ответ на нажатие, а не событие за столом: игрок ждёт
             // его сразу, поэтому говорим своим голосом.
@@ -373,7 +456,25 @@ fun HundredScreen(
         if (settings.sounds) sounds.deal()
         if (settings.signals) sounds.start()
         val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
-        voice.say(dealPhrase(session.match, names, withScores = true), afterMs = afterMs)
+        voice.say(dealPhrase(session.match, names), afterMs = afterMs)
+    }
+
+    /**
+     * Игрок ответил «дальше»: сдаём следующий кон.
+     *
+     * Только отсюда и начинается раздача — движок между конами стоит и сам
+     * ничего не делает ([Hundred.nextDeal]). Раздачу объявляем вслух тем же
+     * [dealPhrase], что и новую партию, но со счётом: кон сменился, а матч
+     * продолжается, и счёт в нём — то единственное, что за раздачей стоит
+     * помнить.
+     */
+    fun nextCon() {
+        session.match.nextDeal()
+        if (settings.sounds) sounds.deal()
+        val afterMs = if (settings.sounds) TableSounds.DEAL_MS + PHRASE_GAP_MS else 0L
+        voice.say(dealPhrase(session.match, names), afterMs = afterMs)
+        session.persist()
+        session.tick++
     }
 
     // За неигровые места играем подряд, пока ход не вернётся к игроку: на
@@ -387,6 +488,9 @@ fun HundredScreen(
         // доигрывают без тебя, игроку незачем (HUNDRED_ONE.md, 2.8).
         while (guard++ < BOT_GUARD && !session.overForPlayer) {
             val game = session.match
+            // Кон кончился и ждёт ответа: раздачу начинает игрок, и до его
+            // «дальше» за столом не ходит никто ([Hundred.nextDeal]).
+            if (game.awaitingDeal()) break
             val seat = game.turn
             if (seat == PLAYER) break
 
@@ -405,6 +509,9 @@ fun HundredScreen(
 
             val shot = ConShot.take(game, seat, move)
             val turnoversBefore = game.stockTurnovers()
+            // Чем кон был до хода — по этому видно, что девятка осталась
+            // непокрытой: покрывать стало нечем.
+            val coverBefore = game.coverCard()
             soundFor(move)
             game.apply(seat, move)
             played = true
@@ -416,15 +523,25 @@ fun HundredScreen(
             if (gap > 0) delay(gap + PHRASE_GAP_MS)
 
             val text = buildString {
-                append(botMovePhrase(game, seat, move, names))
+                append(botMovePhrase(game, seat, move, names, coverBefore))
                 if (shot != null) {
                     append(" ")
                     append(conPhrase(shot, game, names))
                     append(" ")
                     append(afterConPhrase(game, names))
-                } else if (game.stockTurnovers() > turnoversBefore) {
-                    append(" ")
-                    append(TURNOVER_PHRASE)
+                } else {
+                    // Старшая карта бьёт и по игроку, и по соседу: чей ход
+                    // пропущен и кто за это платит картами — слышно только
+                    // отсюда. Под непокрытой девяткой штрафа нет: там и повода
+                    // передавать ход нет.
+                    if (move is HundredMove.Play) {
+                        append(penaltyPhrase(move.card, game, seat, names))
+                        append(coverPhrase(seat, move.card, names))
+                    }
+                    if (game.stockTurnovers() > turnoversBefore) {
+                        append(" ")
+                        append(TURNOVER_PHRASE)
+                    }
                 }
             }
             if (text.isNotBlank()) {
@@ -432,6 +549,15 @@ fun HundredScreen(
             } else {
                 session.lastPhrase = text
             }
+            // Даму положил соперник — и говорит о ней он сам, своим голосом:
+            // за столом комментируют свой ход, а не чужой.
+            if (move is HundredMove.Play && move.card.rank == Rank.QUEEN) {
+                talk(TableEvent.QUEEN, own = true, seat = seat)
+            }
+            // Кон кончился — разговор за столом начинается заново.
+            if (shot != null) chatter.newRound()
+            // Матч мог кончиться этим ходом: прибаутка идёт за его итогом.
+            jokeAfter(game)
         }
 
         val game = session.match
@@ -465,7 +591,7 @@ fun HundredScreen(
             }
 
             session.lastPhrase.isBlank() -> {
-                voice.say(dealPhrase(session.match, names, withScores = true), whenReady = true)
+                voice.say(dealPhrase(session.match, names), whenReady = true)
             }
 
             // Вернулись с другого экрана — напоминаем, на чём остановились.
@@ -487,6 +613,7 @@ fun HundredScreen(
     val status = buildString {
         append(
             when {
+                session.stoppedByChoice -> "Ты встал из-за стола."
                 session.overForPlayer -> "Матч кончен."
                 moves.isNotEmpty() -> "Твой ход."
                 // «Ход соперника», а не по имени: «ход Пети» — падеж, а
@@ -527,11 +654,14 @@ fun HundredScreen(
     val top = game.topCard()
     val конLine = when {
         top == null -> "Кон пуст."
-        game.turn != PLAYER || session.overForPlayer -> "Кон: ${top.spoken()}."
-        game.playable(PLAYER).isEmpty() ->
-            "Кон: ${top.spoken()}. Подходящих нет, тянешь из колоды."
+        game.turn != PLAYER || session.overForPlayer -> "Кон: ${topPhrase(game)}."
+        game.playable(PLAYER).isEmpty() -> if (game.coverCard() != null) {
+            "Кон: ${topPhrase(game)}. Покрывать нечем, тянешь из колоды."
+        } else {
+            "Кон: ${topPhrase(game)}. Подходящих нет, тянешь из колоды."
+        }
 
-        else -> "Кон: ${top.spoken()}. Подходят ${top.suit.spoken} и ${rankName(top.rank)}."
+        else -> "Кон: ${topPhrase(game)}. ${fittingPhrase(game)}"
     }
 
     // Порядок карт — ровно тот, что выбран в настройках, и ничего поверх.
@@ -702,6 +832,65 @@ fun HundredScreen(
         }
     }
 
+    // Заказ масти — тем же диалогом и по той же причине: скринридер объявляет
+    // его целиком и сразу ставит в него фокус. Масти — по две в ряд: четыре
+    // кнопки подряд на телефоне не помещаются, а перенос строки читается как
+    // продолжение того же выбора.
+    orderFor?.let { queen ->
+        AlertDialog(
+            onDismissRequest = { orderFor = null },
+            title = { Text("Заказ масти") },
+            text = { Text("Дама ${queen.spoken()}. Какой мастью ходить дальше?") },
+            confirmButton = {
+                Column {
+                    Suit.entries.chunked(2).forEach { pair ->
+                        Row {
+                            pair.forEach { suit ->
+                                TextButton(
+                                    onClick = {
+                                        orderFor = null
+                                        play(HundredMove.Play(queen, suit))
+                                    },
+                                ) { Text(suit.title) }
+                            }
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { orderFor = null }) { Text("Отмена") }
+            },
+        )
+    }
+
+    // Конец кона — вопрос игроку. Тем же диалогом и по той же причине, что и
+    // заказ масти: скринридер объявляет его целиком и сразу ставит в него
+    // фокус, а вопрос этот — единственное, что сейчас можно сделать за столом.
+    //
+    // Закрыть его мимо ответа нельзя: onDismissRequest оставлен пустым, и это
+    // нарочно. Раздача начинается только по «Дальше», и промах пальцем по
+    // пустому месту не должен сдать кон, которого игрок не просил.
+    if (game.awaitingDeal() && !session.overForPlayer) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Кон кончен") },
+            text = { Text("Играем дальше или хватит?") },
+            confirmButton = {
+                TextButton(onClick = { nextCon() }) { Text("Дальше") }
+            },
+            dismissButton = {
+                // «Хватит» — не пауза, а выход из-за стола: стол остаётся
+                // стоять, и вернуться к нему можно новой партией.
+                TextButton(
+                    onClick = {
+                        session.stopByChoice()
+                        voice.sayRequested(stoppedPhrase(session.match, names))
+                    },
+                ) { Text("Хватит") }
+            },
+        )
+    }
+
     // Редкое — под кнопкой «Ещё». Диалогом, а не выпадающим списком:
     // диалог скринридер объявляет целиком и сразу ставит в него фокус,
     // а в выпадашке незрячий может не понять, что вообще что-то открылось.
@@ -733,12 +922,12 @@ fun HundredScreen(
 /**
  * Снимок кона **до** хода, которым кон может кончиться.
  *
- * Нужен потому, что движок, приняв последнюю карту, тут же считает очки и
- * раздаёт следующий кон. После хода от прежнего кона на столе не остаётся
- * ничего: ни рук, за которые записаны очки, ни прежнего счёта, по которому
- * видно, кому что прибавилось. Поэтому экран снимает всё это заранее — и
- * только по ходу, которым кон и правда кончается: снимок стоит одной руки и
- * одного счёта, но брать их на каждый ход незачем.
+ * Нужен потому, что движок, приняв последнюю карту, тут же считает очки:
+ * после хода от прежнего кона на столе остаётся не всё — счёт уже новый, а
+ * руки ещё прежние, и разобрать по ним, кому что прибавилось, нельзя. Поэтому
+ * экран снимает всё это заранее — и только по ходу, которым кон и правда
+ * кончается: снимок стоит одной руки и одного счёта, но брать их на каждый ход
+ * незачем.
  */
 private class ConShot(
     /** Кто вышел — за ним и кон. */
@@ -757,9 +946,9 @@ private class ConShot(
          * Снимок — или null, если этот ход кон не кончает.
          *
          * Кон кончается ровно одним ходом: картой, которая была в руке
-         * последней. Спрашивать об этом движок не о чем — он к тому времени
-         * уже раздал следующий, — поэтому признак берём из правил: рука была
-         * в одну карту, и карта сыграна.
+         * последней. Спрашивать об этом движок не о чем — к тому времени он
+         * уже пересчитал счёт, — поэтому признак берём из правил: рука была в
+         * одну карту, и карта сыграна.
          */
         fun take(game: Hundred, seat: Int, move: HundredMove): ConShot? {
             val hand = game.handOf(seat)
@@ -780,12 +969,30 @@ private const val TURNOVER_PHRASE =
     "Колода кончилась — стопку переворачиваем, играем ей дальше."
 
 /**
+ * Вопрос в конце матча. Приложение новую партию само не начинает: кончился
+ * матч — за стол садиться заново решает игрок, а не приложение (Катерина,
+ * 20.09). Кнопка «Ещё раз» для этого и стоит внизу.
+ */
+private const val MATCH_AGAIN_PHRASE =
+    " Играем дальше? Новая партия — по кнопке «Ещё раз», сам я её не начинаю."
+
+/** Вопрос про масть: его задают, когда игрок нажал даму. */
+private const val ORDER_QUESTION =
+    "Дама. Какой мастью ходить дальше: пики, черви, бубна или крести?"
+
+/**
  * Свой ход — вслух. Короткая живая речь, как за настоящим столом: свой ход
  * повторяет то, что игрок только что сделал сам, поэтому здесь важнее
  * точность, чем разнообразие.
  */
-private fun ownMovePhrase(move: HundredMove, game: Hundred): String = when (move) {
-    is HundredMove.Play -> "Ты кладёшь ${move.card.spoken()}."
+private fun ownMovePhrase(move: HundredMove, game: Hundred, coverBefore: Card?): String = when (move) {
+    is HundredMove.Play -> buildString {
+        append("Ты кладёшь ${move.card.spoken()}.")
+        // Заказ называем сразу и целиком: пока дама на кону, ходить придётся
+        // ею, и игроку это держать в голове — а держать нечего, если заказ
+        // прозвучал один раз и мельком.
+        move.order?.let { append(" Козырь — ${it.title}.") }
+    }
 
     // Взятую карту называем вслух и всегда: она пришла из закрытой колоды, и
     // кроме этих слов игрок о ней не узнает ничего. Назвать карту мало:
@@ -795,10 +1002,30 @@ private fun ownMovePhrase(move: HundredMove, game: Hundred): String = when (move
     // пройти (HUNDRED_ONE.md, 3.2).
     HundredMove.Draw -> {
         val drawn = game.handOf(PLAYER).lastOrNull()
-        val top = game.topCard()
-        val fits = drawn != null && top != null && game.fits(drawn, top)
-        "Ты берёшь из колоды: ${drawn?.spoken()}." +
-            if (fits) " Подошла — ходи ею." else " Не подошла, ход переходит."
+        val cover = game.coverCard()
+        when {
+            // Девятка ждёт покрытия: ход остаётся твой, и подошла карта или
+            // нет — решает не верхняя карта кона, а сама девятка.
+            cover != null -> "Ты берёшь из колоды: ${drawn?.spoken()}." +
+                if (drawn != null && game.fits(drawn, cover)) {
+                    " Подошла — покрой девятку."
+                } else {
+                    " Не подошла — тяни дальше, девятку надо покрыть."
+                }
+
+            // Девятка была, а тянуть больше неоткуда: движок оставляет её на
+            // кону непокрытой и передаёт ход — и это единственный добор, после
+            // которого ход уходит, не покрыв.
+            coverBefore != null -> "Ты берёшь из колоды — и брать больше нечего." +
+                " Девятку покрыть нечем, она остаётся, ход переходит."
+
+            else -> {
+                val top = game.topCard()
+                val fits = drawn != null && top != null && game.fits(drawn, top)
+                "Ты берёшь из колоды: ${drawn?.spoken()}." +
+                    if (fits) " Подошла — ходи ею." else " Не подошла, ход переходит."
+            }
+        }
     }
 }
 
@@ -811,9 +1038,27 @@ private fun botMovePhrase(
     seat: Int,
     move: HundredMove,
     names: List<String>,
+    coverBefore: Card?,
 ): String = when (move) {
-    is HundredMove.Play -> "${names[seat]} кладёт ${move.card.spoken()}."
-    HundredMove.Draw -> if (game.turn == seat) "" else "${names[seat]} пропускает ход."
+    is HundredMove.Play -> buildString {
+        append("${names[seat]} кладёт ${move.card.spoken()}.")
+        move.order?.let { append(" Козырь — ${it.title}.") }
+    }
+
+    HundredMove.Draw -> when {
+        // Под непокрытой девяткой соперник роется в колоде: он ищет, чем
+        // покрыть, и ход при нём. Молчать об этих доборах нельзя — за столом
+        // иначе наступает тишина без объяснения.
+        game.coverCard() != null -> "${names[seat]} тянет из колоды — ищет, чем покрыть девятку."
+
+        // Брать больше неоткуда: девятка остаётся лежать, и ход уходит.
+        coverBefore != null -> "Брать неоткуда — девятка остаётся непокрытой, ход переходит."
+
+        // Обычный добор: подошла — соперник ею и сходит, и говорить до этого
+        // нечего; не подошла — ход переходит, и это слышно.
+        game.turn == seat -> ""
+        else -> "${names[seat]} пропускает ход."
+    }
 }
 
 /**
@@ -889,25 +1134,50 @@ private fun conPhrase(shot: ConShot, game: Hundred, names: List<String>): String
 private fun afterConPhrase(game: Hundred, names: List<String>): String = when {
     game.isOut(PLAYER) -> matchPhrase(game, names)
     game.finished -> matchPhrase(game, names)
-    else -> dealPhrase(game, names, withScores = false)
+    // Раздачи здесь больше нет: кон кончился, а следующий начинают не сами
+    // ([CON_AGAIN_PHRASE]).
+    else -> CON_AGAIN_PHRASE
 }
 
+/**
+ * Вопрос в конце кона. Приложение новый кон само не сдаёт: кончился кон —
+ * играть дальше или встать из-за стола решает игрок (Катерина, 20.09).
+ * Раздачу начинает кнопка «Дальше», и без неё стол стоит.
+ */
+private const val CON_AGAIN_PHRASE =
+    " Играем дальше или хватит? Дальше — по кнопке «Дальше», хватит — по кнопке «Хватит»."
+
+/**
+ * Игрок встал из-за стола на «хватит». Итог называем здесь, а не в
+ * [matchPhrase]: матч не кончен — он брошен на середине, победителя за ним
+ * нет, и говорить про него нечего. Есть счёт, с которым игрок встаёт, и есть
+ * кнопка, которой он вернётся.
+ */
+private fun stoppedPhrase(game: Hundred, names: List<String>): String =
+    "Хватит так хватит. Счёт: ${scorePhrase(game, names)}." +
+        " Новая партия — по кнопке «Ещё раз»."
+
 /** Итог матча прямой фразой. Прибаутка придёт второй, отдельной. */
-private fun matchPhrase(game: Hundred, names: List<String>): String = when {
-    // Игрок выбыл — матч для него кончен, даже если за столом ещё играют.
-    game.isOut(PLAYER) -> "Ты выбываешь из матча. Счёт: ${scorePhrase(game, names)}."
-    game.winner == PLAYER -> "Матч кончен. За столом остаёшься ты."
-    game.winner != null -> "Матч кончен. За столом остаётся ${names[game.winner!!]}."
-    else -> "Матч кончен."
+private fun matchPhrase(game: Hundred, names: List<String>): String {
+    val fate = when {
+        // Игрок выбыл — матч для него кончен, даже если за столом ещё играют.
+        game.isOut(PLAYER) -> "Ты выбываешь из матча. Счёт: ${scorePhrase(game, names)}."
+        game.winner == PLAYER -> "Матч кончен. За столом остаёшься ты."
+        game.winner != null -> "Матч кончен. За столом остаётся ${names[game.winner!!]}."
+        else -> "Матч кончен."
+    }
+    return fate + MATCH_AGAIN_PHRASE
 }
 
 /**
  * Раздача: сколько карт, что на кону, чей счёт и кто заходит.
  *
- * [withScores] выключается на раздаче после кона: счёт там только что
- * прозвучал вместе с итогом кона, и повторять его подряд незачем.
+ * Счёт называется всегда, и это не многословие: раздачу объявляют после конца
+ * кона, а счёт за кон — единственное, что между конами стоит помнить. На
+ * первой раздаче матча он нулевой, но и там он ответ на вопрос «с чего
+ * начинаем».
  */
-private fun dealPhrase(game: Hundred, names: List<String>, withScores: Boolean): String =
+private fun dealPhrase(game: Hundred, names: List<String>): String =
     buildString {
         val dealer = game.dealer()
         // Сдатчик раздаёт всем по пять, а себе берёт четыре: пятая его карта
@@ -921,8 +1191,8 @@ private fun dealPhrase(game: Hundred, names: List<String>, withScores: Boolean):
                 "Новая раздача. По пять карт, сдаёт ${names[dealer]}."
             },
         )
-        game.topCard()?.let { append(" На кону — ${it.spoken()}.") }
-        if (withScores) append(" Счёт: ${scorePhrase(game, names)}.")
+        game.topCard()?.let { append(" На кону — ${topPhrase(game)}.") }
+        append(" Счёт: ${scorePhrase(game, names)}.")
         append(
             if (game.turn == PLAYER) " Заходишь ты." else " Заходит ${names[game.turn]}.",
         )
@@ -934,12 +1204,23 @@ private fun dealPhrase(game: Hundred, names: List<String>, withScores: Boolean):
  * игроку надо подсказать выход.
  */
 private fun turnPhrase(game: Hundred): String {
-    val top = game.topCard() ?: return TURN_PHRASE
+    if (game.topCard() == null) return TURN_PHRASE
+    // Девятка под покрытием — это не «твой ход по кону», а «покрой свою
+    // девятку»: ход остался у того же игрока, и без этих слов он ищет в руке
+    // карту под верхнюю карту кона, которой там может и не быть.
+    game.coverCard()?.let { nine ->
+        return if (game.playable(PLAYER).isEmpty()) {
+            "Твой ход. Девятка не покрыта, а подходящей карты нет:" +
+                " тянешь из колоды, пока не найдёшь."
+        } else {
+            "Твой ход. Покрой ${nine.spoken()}: нужна ${nine.suit.title} или другая девятка."
+        }
+    }
     val fitting = game.playable(PLAYER)
     return if (fitting.isEmpty()) {
-        "Твой ход. На кону ${top.spoken()}. Подходящих нет, тянешь карту."
+        "Твой ход. На кону ${topPhrase(game)}. Подходящих нет, тянешь карту."
     } else {
-        "Твой ход. На кону ${top.spoken()}."
+        "Твой ход. На кону ${topPhrase(game)}."
     }
 }
 
@@ -951,6 +1232,9 @@ private fun turnPhrase(game: Hundred): String {
  */
 private fun allowedPhrase(game: Hundred, names: List<String>): String {
     if (game.isOut(PLAYER) || game.finished) return "Матч кончен."
+    // Кон сыгран, нового ещё нет: за столом сейчас решается не ход, а играть
+    // ли дальше, — и это единственный честный ответ на «что можно».
+    if (game.awaitingDeal()) return "Кон кончен. Играем дальше или хватит?"
     if (game.turn != PLAYER) {
         return if (game.playerCount <= 2) {
             "Сейчас ход соперника, подожди."
@@ -959,8 +1243,17 @@ private fun allowedPhrase(game: Hundred, names: List<String>): String {
         }
     }
 
+    // Под непокрытой девяткой ответ другой: вопрос сейчас не «чем ходить», а
+    // «чем покрыть», и карты перечисляются те, что годятся в покрытие.
+    val covering = game.coverCard() != null
     val fitting = game.playable(PLAYER)
-    if (fitting.isEmpty()) return "Подходящих нет, тянешь карту."
+    if (fitting.isEmpty()) {
+        return if (covering) {
+            "Покрывать нечем — тянешь из колоды, пока не найдёшь."
+        } else {
+            "Подходящих нет, тянешь карту."
+        }
+    }
 
     val named = fitting.take(3)
     val tail = if (fitting.size <= 3) {
@@ -968,7 +1261,8 @@ private fun allowedPhrase(game: Hundred, names: List<String>): String {
     } else {
         ", и ещё ${countWord(fitting.size - 3)}, пройди по руке"
     }
-    return "Можно: ${speakList(named.map { it.spoken() })}$tail."
+    val head = if (covering) "Покрой девятку" else "Можно"
+    return "$head: ${speakList(named.map { it.spoken() })}$tail."
 }
 
 /** Почему картой не сыграть — ответ на нажатие. */
@@ -982,15 +1276,29 @@ private fun refusalPhrase(game: Hundred, names: List<String>): String = when {
 
     // Подходящей карты нет вовсе — тогда это не «эта не подходит», а «нечем
     // ходить», и выход у игрока один.
+    game.coverCard() != null && game.playable(PLAYER).isEmpty() ->
+        "Девятку покрыть нечем — тянешь из колоды, пока не найдёшь."
+
     game.playable(PLAYER).isEmpty() -> "Подходящих нет, тянешь карту."
+
+    // Под непокрытой девяткой подходящая карта — та, что годится в покрытие,
+    // а не та, что подошла бы к верхней карте кона.
+    game.coverCard() != null -> "Этой картой девятку не покрыть: нужна та же масть" +
+        " или другая девятка."
 
     else -> "Этой картой не пройти: нужна та же масть или то же достоинство."
 }
 
 /** Что сказать, когда матч поднят с диска. */
 private fun resumePhrase(game: Hundred, names: List<String>): String {
+    // Подняли стол между конами: раздачи ещё нет, и спрашивать «чей ход»
+    // не у кого — на столе сейчас вопрос к игроку, а не ход.
+    if (game.awaitingDeal()) {
+        return "Продолжаем партию. Счёт: ${scorePhrase(game, names)}. Кон сыгран." +
+            CON_AGAIN_PHRASE
+    }
     val top = game.topCard()
-    val table = if (top == null) "" else " На кону — ${top.spoken()}."
+    val table = if (top == null) "" else " На кону — ${topPhrase(game)}."
     return "Продолжаем партию. Счёт: ${scorePhrase(game, names)}." +
         " У тебя ${game.handSize(PLAYER)} карт, в колоде ${game.stockSize()}.$table " +
         if (game.turn == PLAYER) TURN_PHRASE else "Ходит ${names[game.turn]}."
@@ -1030,6 +1338,10 @@ private fun pointWord(value: Int): String {
     }
 }
 
+/** Сколько карт ушло в руку: «одну карту», «две карты», «четыре карты». */
+private fun cardsWord(count: Int): String =
+    if (count == 1) "одну карту" else "${countWord(count)} карты"
+
 /** Название карты числом: «ещё две», «ещё пять». До пяти — словами. */
 private fun countWord(count: Int): String = when (count) {
     1 -> "одна"
@@ -1041,6 +1353,77 @@ private fun countWord(count: Int): String = when (count) {
 }
 
 /** Достоинство во множественном числе: «подходят черви и семёрки». */
+/**
+ * Чем лежит кон — вслух.
+ *
+ * Дама с заказом ходит не своей мастью, а заказом: назвать её «дама крести»,
+ * когда заказаны черви, значит послать игрока искать в руке не ту масть, и он
+ * вернётся ни с чем. Заказ поэтому звучит вместе с картой и всегда.
+ */
+private fun topPhrase(game: Hundred): String {
+    val top = game.topCard() ?: return "пусто"
+    // Непокрытая девятка — первое, что надо знать про кон: пока её не
+    // покроют, ход по верхней карте никуда не идёт, и без этих слов игрок
+    // ищет в руке карту под девятку, которую покрывать надо не ему.
+    if (game.coverCard() != null) return "${top.spoken()}, не покрыта"
+    val ordered = game.orderedSuit() ?: return top.spoken()
+    return "${top.spoken()}, заказ — ${ordered.title}"
+}
+
+/**
+ * Штраф за старшую карту — вслух и с адресом.
+ *
+ * Число здесь называется ровно то, сколько карт ушло соседу: если приложение
+ * скажет «берёт две», а в руку придёт одна, это будет ложь, которую игрок
+ * обнаружит пальцами. Пусто — карта обычная, и говорить нечего.
+ */
+private fun penaltyPhrase(card: Card, game: Hundred, seat: Int, names: List<String>): String {
+    val take = penaltyOf(card) ?: return ""
+    val victim = game.penaltyVictim(seat)
+    val mine = victim == PLAYER
+    return when {
+        // Туз ход отнимает, но брать после него нечего — и это не то же
+        // самое, что «штрафа нет» (HUNDRED_ONE.md, 2.10).
+        take == 0 -> if (mine) {
+            " Твой ход пропускается: брать нечего."
+        } else {
+            " ${names[victim]} пропускает ход."
+        }
+
+        mine -> " Ты берёшь ${cardsWord(take)} и пропускаешь ход."
+        else -> " ${names[victim]} берёт ${cardsWord(take)} и пропускает ход."
+    }
+}
+
+/**
+ * Непокрытая девятка — вслух. Ход остаётся у того, кто её положил, и без этих
+ * слов заминка читается как зависание: карта легла, а за столом тишина.
+ */
+private fun coverPhrase(seat: Int, card: Card, names: List<String>): String {
+    if (card.rank != Rank.NINE) return ""
+    return if (seat == PLAYER) {
+        " Покрой её: нужна ${card.suit.title} или другая девятка."
+    } else {
+        " ${names[seat]} покрывает её сам."
+    }
+}
+
+/** Что подходит к кону — с той же оговоркой о заказе. */
+private fun fittingPhrase(game: Hundred): String {
+    val ordered = game.orderedSuit()
+    val top = game.topCard()
+    return when {
+        // Девятка под покрытием: подходит не то, что к верхней карте кона, а
+        // то, чем её кроют.
+        game.coverCard() != null ->
+            "Покрой её: нужна ${game.coverCard()!!.suit.title} или другая девятка."
+
+        ordered != null -> "Подходят ${ordered.title} и дамы."
+        top == null -> ""
+        else -> "Подходят ${top.suit.spoken} и ${rankName(top.rank)}."
+    }
+}
+
 private fun rankName(rank: Rank): String = when (rank) {
     Rank.SIX -> "шестёрки"
     Rank.SEVEN -> "семёрки"
