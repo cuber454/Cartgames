@@ -3,6 +3,7 @@ package games.cardgames.settings
 import android.content.Context
 import android.content.SharedPreferences
 import games.cardgames.GAME_DURAK
+import games.cardgames.GAME_HUNDRED
 import games.cardgames.GAME_KOZEL
 import games.cardgames.GAME_THOUSAND
 import games.engine.HandOrder
@@ -139,6 +140,7 @@ fun botSpeaksAlone(
 fun botName(settings: Settings, game: String): String = when (game) {
     GAME_KOZEL -> settings.botNameKozel
     GAME_THOUSAND -> settings.botNameThousand
+    GAME_HUNDRED -> settings.botNameHundred
     else -> settings.botNameDurak
 }
 
@@ -146,6 +148,7 @@ fun botName(settings: Settings, game: String): String = when (game) {
 fun withBotName(settings: Settings, game: String, value: String): Settings = when (game) {
     GAME_KOZEL -> settings.copy(botNameKozel = value)
     GAME_THOUSAND -> settings.copy(botNameThousand = value)
+    GAME_HUNDRED -> settings.copy(botNameHundred = value)
     else -> settings.copy(botNameDurak = value)
 }
 
@@ -160,6 +163,7 @@ fun withBotNameSecond(settings: Settings, game: String, value: String): Settings
     GAME_THOUSAND -> settings.copy(botNameThousandSecond = value)
     GAME_DURAK -> settings.copy(botNameDurakSecond = value)
     GAME_KOZEL -> settings.copy(botNameKozelSecond = value)
+    GAME_HUNDRED -> settings.copy(botNameHundredSecond = value)
     else -> settings
 }
 
@@ -187,6 +191,7 @@ fun botNameSecond(settings: Settings, game: String): String = when (game) {
     GAME_THOUSAND -> settings.botNameThousandSecond
     GAME_DURAK -> settings.botNameDurakSecond
     GAME_KOZEL -> settings.botNameKozelSecond
+    GAME_HUNDRED -> settings.botNameHundredSecond
     else -> ""
 }
 
@@ -208,6 +213,7 @@ fun botTitleSecond(settings: Settings, game: String): String =
 fun seatsAtTable(settings: Settings, game: String): Int = when (game) {
     GAME_THOUSAND -> settings.thousandSeats
     GAME_KOZEL -> settings.kozelSeats
+    GAME_HUNDRED -> settings.hundredSeats
     else -> settings.durakSeats
 }.coerceIn(2, 3)
 
@@ -215,6 +221,7 @@ fun seatsAtTable(settings: Settings, game: String): Int = when (game) {
 fun withSeats(settings: Settings, game: String, seats: Int): Settings = when (game) {
     GAME_THOUSAND -> settings.copy(thousandSeats = seats.coerceIn(2, 3))
     GAME_KOZEL -> settings.copy(kozelSeats = seats.coerceIn(2, 3))
+    GAME_HUNDRED -> settings.copy(hundredSeats = seats.coerceIn(2, 3))
     else -> settings.copy(durakSeats = seats.coerceIn(2, 3))
 }
 
@@ -272,6 +279,12 @@ fun seatsPhrase(seats: Int, game: String): String = when {
 
     game == GAME_KOZEL ->
         "За столом двое: соперник один, по семь костей и четырнадцать в базаре. Со следующей партии."
+
+    game == GAME_HUNDRED && seats >= 3 ->
+        "За столом трое: соперников двое, по пять карт и одна на кон. Со следующей партии."
+
+    game == GAME_HUNDRED ->
+        "За столом двое: соперник один, по пять карт и одна на кон. Со следующей партии."
 
     seats >= 3 -> "За столом трое: соперников двое, по шесть карт каждому. Со следующей партии."
 
@@ -404,6 +417,12 @@ data class Settings(
      * «Дураке» то же самое, и там это уже сделано).
      */
     val botVoiceKozelSecond: String? = null,
+    val botVoiceHundred: String? = null,
+    /**
+     * Голос второго соперника в «101» — того, кто садится за стол, только
+     * когда за ним трое. null — голос приложения, как и у первого бота.
+     */
+    val botVoiceHundredSecond: String? = null,
     /**
      * Синтезатор соперника — свой у каждой игры, как и голос. null — «как у
      * приложения», пусто — «системный».
@@ -423,6 +442,9 @@ data class Settings(
     val botEngineKozel: String? = null,
     /** Синтезатор второго соперника в «Козле» — у него свой, как и голос. */
     val botEngineKozelSecond: String? = null,
+    val botEngineHundred: String? = null,
+    /** Синтезатор второго соперника в «101» — у него свой, как и голос. */
+    val botEngineHundredSecond: String? = null,
     /**
      * Скорость речи соперника — своя у каждой игры, как и голос. 1.0 — как
      * говорит приложение.
@@ -452,6 +474,12 @@ data class Settings(
      * надо всех (Катерина, 19.09).
      */
     val botRateKozelSecond: Float = 1.0f,
+    val botRateHundred: Float = 1.0f,
+    /**
+     * Скорость второго соперника в «101» — ещё одна примета вдобавок к голосу
+     * и синтезатору: за столом на троих говорят трое, и различать их надо всех.
+     */
+    val botRateHundredSecond: Float = 1.0f,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     /**
@@ -507,6 +535,12 @@ data class Settings(
      * того, кого игрок назвал (Катерина, 19.09).
      */
     val botNameKozelSecond: String = "",
+    val botNameHundred: String = "",
+    /**
+     * Имя второго соперника «101» — того, кто садится за стол, только когда
+     * за ним трое. Пусто — «Второй бот».
+     */
+    val botNameHundredSecond: String = "",
     /**
      * Сколько мест за столом «Тысячи»: двое или трое.
      *
@@ -545,6 +579,17 @@ data class Settings(
      * её начали (число мест записано в самой партии, см. KozelSave).
      */
     val kozelSeats: Int = 2,
+    /**
+     * Сколько мест за столом «101»: двое или трое.
+     *
+     * Движок держит оба стола — на троих карт на руки приходит столько же,
+     * меняется лишь число соперников, — поэтому выбор здесь, а не в правилах.
+     *
+     * По умолчанию трое: «101» складывалась как игра на троих, и вдвоём в неё
+     * садятся реже. Открытая партия продолжается за тем столом, за каким её
+     * начали: число мест помнит сама запись (HundredSave).
+     */
+    val hundredSeats: Int = 3,
     val sounds: Boolean = true,
     /**
      * Сигналы: короткие ноты о событиях — начало, твой ход, победа,
@@ -568,6 +613,7 @@ data class Settings(
     val botDifficultyDurak: Difficulty = Difficulty.NORMAL,
     val botDifficultyThousand: Difficulty = Difficulty.NORMAL,
     val botDifficultyKozel: Difficulty = Difficulty.NORMAL,
+    val botDifficultyHundred: Difficulty = Difficulty.NORMAL,
     /**
      * Порядок карт на руке: по масти или по старшинству.
      *
@@ -624,6 +670,8 @@ private const val KEY_BOT_VOICE_THOUSAND = "bot_voice_thousand"
 private const val KEY_BOT_VOICE_THOUSAND_SECOND = "bot_voice_thousand_second"
 private const val KEY_BOT_VOICE_KOZEL = "bot_voice_kozel"
 private const val KEY_BOT_VOICE_KOZEL_SECOND = "bot_voice_kozel_second"
+private const val KEY_BOT_VOICE_HUNDRED = "bot_voice_hundred"
+private const val KEY_BOT_VOICE_HUNDRED_SECOND = "bot_voice_hundred_second"
 
 /**
  * Синтезатор соперника. Пустая строка — «системный»: она значит «движок по
@@ -635,12 +683,16 @@ private const val KEY_BOT_ENGINE_THOUSAND = "bot_engine_thousand"
 private const val KEY_BOT_ENGINE_THOUSAND_SECOND = "bot_engine_thousand_second"
 private const val KEY_BOT_ENGINE_KOZEL = "bot_engine_kozel"
 private const val KEY_BOT_ENGINE_KOZEL_SECOND = "bot_engine_kozel_second"
+private const val KEY_BOT_ENGINE_HUNDRED = "bot_engine_hundred"
+private const val KEY_BOT_ENGINE_HUNDRED_SECOND = "bot_engine_hundred_second"
 private const val KEY_BOT_RATE_DURAK = "bot_rate_durak"
 private const val KEY_BOT_RATE_DURAK_SECOND = "bot_rate_durak_second"
 private const val KEY_BOT_RATE_THOUSAND = "bot_rate_thousand"
 private const val KEY_BOT_RATE_THOUSAND_SECOND = "bot_rate_thousand_second"
 private const val KEY_BOT_RATE_KOZEL = "bot_rate_kozel"
 private const val KEY_BOT_RATE_KOZEL_SECOND = "bot_rate_kozel_second"
+private const val KEY_BOT_RATE_HUNDRED = "bot_rate_hundred"
+private const val KEY_BOT_RATE_HUNDRED_SECOND = "bot_rate_hundred_second"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
 private const val KEY_PHRASE_PAUSE = "phrase_pause"
@@ -650,6 +702,8 @@ private const val KEY_BOT_NAME_THOUSAND = "bot_name_thousand"
 private const val KEY_BOT_NAME_THOUSAND_SECOND = "bot_name_thousand_second"
 private const val KEY_BOT_NAME_KOZEL = "bot_name_kozel"
 private const val KEY_BOT_NAME_KOZEL_SECOND = "bot_name_kozel_second"
+private const val KEY_BOT_NAME_HUNDRED = "bot_name_hundred"
+private const val KEY_BOT_NAME_HUNDRED_SECOND = "bot_name_hundred_second"
 /**
  * Прежние ключи имени — одно на все игры и имя второго соперника в тысяче.
  *
@@ -663,6 +717,7 @@ private const val KEY_BOT_NAME_SECOND = "bot_name_second"
 private const val KEY_THOUSAND_SEATS = "thousand.seats"
 private const val KEY_DURAK_SEATS = "durak.seats"
 private const val KEY_KOZEL_SEATS = "kozel.seats"
+private const val KEY_HUNDRED_SEATS = "hundred.seats"
 private const val KEY_SOUNDS = "sounds"
 private const val KEY_SIGNALS = "signals"
 private const val KEY_VIBRATION = "vibration"
@@ -670,6 +725,7 @@ private const val KEY_OWN_VIBRATION = "own_vibration"
 private const val KEY_BOT_DIFFICULTY_DURAK = "durak.difficulty"
 private const val KEY_BOT_DIFFICULTY_THOUSAND = "thousand.difficulty"
 private const val KEY_BOT_DIFFICULTY_KOZEL = "kozel.difficulty"
+private const val KEY_BOT_DIFFICULTY_HUNDRED = "hundred.difficulty"
 private const val KEY_ORDER = "order"
 private const val KEY_TILE_ORDER = "tile_order"
 
@@ -698,18 +754,24 @@ fun loadSettings(context: Context): Settings {
         botVoiceThousandSecond = prefs.getString(KEY_BOT_VOICE_THOUSAND_SECOND, null),
         botVoiceKozel = prefs.getString(KEY_BOT_VOICE_KOZEL, null),
         botVoiceKozelSecond = prefs.getString(KEY_BOT_VOICE_KOZEL_SECOND, null),
+        botVoiceHundred = prefs.getString(KEY_BOT_VOICE_HUNDRED, null),
+        botVoiceHundredSecond = prefs.getString(KEY_BOT_VOICE_HUNDRED_SECOND, null),
         botEngineDurak = prefs.getString(KEY_BOT_ENGINE_DURAK, null),
         botEngineDurakSecond = prefs.getString(KEY_BOT_ENGINE_DURAK_SECOND, null),
         botEngineThousand = prefs.getString(KEY_BOT_ENGINE_THOUSAND, null),
         botEngineThousandSecond = prefs.getString(KEY_BOT_ENGINE_THOUSAND_SECOND, null),
         botEngineKozel = prefs.getString(KEY_BOT_ENGINE_KOZEL, null),
         botEngineKozelSecond = prefs.getString(KEY_BOT_ENGINE_KOZEL_SECOND, null),
+        botEngineHundred = prefs.getString(KEY_BOT_ENGINE_HUNDRED, null),
+        botEngineHundredSecond = prefs.getString(KEY_BOT_ENGINE_HUNDRED_SECOND, null),
         botRateDurak = readBotRate(prefs, KEY_BOT_RATE_DURAK),
         botRateDurakSecond = readBotRate(prefs, KEY_BOT_RATE_DURAK_SECOND),
         botRateThousand = readBotRate(prefs, KEY_BOT_RATE_THOUSAND),
         botRateThousandSecond = readBotRate(prefs, KEY_BOT_RATE_THOUSAND_SECOND),
         botRateKozel = readBotRate(prefs, KEY_BOT_RATE_KOZEL),
         botRateKozelSecond = readBotRate(prefs, KEY_BOT_RATE_KOZEL_SECOND),
+        botRateHundred = readBotRate(prefs, KEY_BOT_RATE_HUNDRED),
+        botRateHundredSecond = readBotRate(prefs, KEY_BOT_RATE_HUNDRED_SECOND),
         voiceMode = prefs.getString(KEY_VOICE_MODE, null)
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
@@ -721,9 +783,12 @@ fun loadSettings(context: Context): Settings {
         botNameThousandSecond = readBotName(prefs, KEY_BOT_NAME_THOUSAND_SECOND, KEY_BOT_NAME_SECOND),
         botNameKozel = readBotName(prefs, KEY_BOT_NAME_KOZEL, KEY_BOT_NAME),
         botNameKozelSecond = readBotName(prefs, KEY_BOT_NAME_KOZEL_SECOND, KEY_BOT_NAME_SECOND),
+        botNameHundred = readBotName(prefs, KEY_BOT_NAME_HUNDRED, KEY_BOT_NAME),
+        botNameHundredSecond = readBotName(prefs, KEY_BOT_NAME_HUNDRED_SECOND, KEY_BOT_NAME_SECOND),
         thousandSeats = readSeats(prefs, KEY_THOUSAND_SEATS),
         durakSeats = readSeats(prefs, KEY_DURAK_SEATS),
         kozelSeats = readSeats(prefs, KEY_KOZEL_SEATS),
+        hundredSeats = readSeats(prefs, KEY_HUNDRED_SEATS, default = 3),
         sounds = prefs.getBoolean(KEY_SOUNDS, true),
         signals = prefs.getBoolean(KEY_SIGNALS, true),
         vibration = prefs.getBoolean(KEY_VIBRATION, true),
@@ -731,6 +796,7 @@ fun loadSettings(context: Context): Settings {
         botDifficultyDurak = readDifficulty(prefs, KEY_BOT_DIFFICULTY_DURAK),
         botDifficultyThousand = readDifficulty(prefs, KEY_BOT_DIFFICULTY_THOUSAND),
         botDifficultyKozel = readDifficulty(prefs, KEY_BOT_DIFFICULTY_KOZEL),
+        botDifficultyHundred = readDifficulty(prefs, KEY_BOT_DIFFICULTY_HUNDRED),
         order = prefs.getString(KEY_ORDER, null)
             ?.let { name -> runCatching { HandOrder.valueOf(name) }.getOrNull() }
             ?: HandOrder.BY_SUIT,
@@ -787,8 +853,8 @@ private fun readBotName(prefs: SharedPreferences, key: String, legacy: String): 
  * того, как появился выбор: партия, начатая до обновления, продолжается за
  * тем же столом, за каким шла.
  */
-private fun readSeats(prefs: SharedPreferences, key: String): Int =
-    (prefs.all[key] as? Int)?.coerceIn(2, 3) ?: 2
+private fun readSeats(prefs: SharedPreferences, key: String, default: Int = 2): Int =
+    (prefs.all[key] as? Int)?.coerceIn(2, 3) ?: default
 
 /**
  * Соперник из хранилища: сперва свой ключ игры, а если его ещё нет — общий
@@ -812,18 +878,24 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_VOICE_THOUSAND_SECOND, settings.botVoiceThousandSecond)
         .putString(KEY_BOT_VOICE_KOZEL, settings.botVoiceKozel)
         .putString(KEY_BOT_VOICE_KOZEL_SECOND, settings.botVoiceKozelSecond)
+        .putString(KEY_BOT_VOICE_HUNDRED, settings.botVoiceHundred)
+        .putString(KEY_BOT_VOICE_HUNDRED_SECOND, settings.botVoiceHundredSecond)
         .putString(KEY_BOT_ENGINE_DURAK, settings.botEngineDurak)
         .putString(KEY_BOT_ENGINE_DURAK_SECOND, settings.botEngineDurakSecond)
         .putString(KEY_BOT_ENGINE_THOUSAND, settings.botEngineThousand)
         .putString(KEY_BOT_ENGINE_THOUSAND_SECOND, settings.botEngineThousandSecond)
         .putString(KEY_BOT_ENGINE_KOZEL, settings.botEngineKozel)
         .putString(KEY_BOT_ENGINE_KOZEL_SECOND, settings.botEngineKozelSecond)
+        .putString(KEY_BOT_ENGINE_HUNDRED, settings.botEngineHundred)
+        .putString(KEY_BOT_ENGINE_HUNDRED_SECOND, settings.botEngineHundredSecond)
         .putFloat(KEY_BOT_RATE_DURAK, settings.botRateDurak)
         .putFloat(KEY_BOT_RATE_DURAK_SECOND, settings.botRateDurakSecond)
         .putFloat(KEY_BOT_RATE_THOUSAND, settings.botRateThousand)
         .putFloat(KEY_BOT_RATE_THOUSAND_SECOND, settings.botRateThousandSecond)
         .putFloat(KEY_BOT_RATE_KOZEL, settings.botRateKozel)
         .putFloat(KEY_BOT_RATE_KOZEL_SECOND, settings.botRateKozelSecond)
+        .putFloat(KEY_BOT_RATE_HUNDRED, settings.botRateHundred)
+        .putFloat(KEY_BOT_RATE_HUNDRED_SECOND, settings.botRateHundredSecond)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
         .putInt(KEY_PHRASE_PAUSE, settings.phrasePauseMs)
@@ -833,9 +905,12 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_NAME_THOUSAND_SECOND, settings.botNameThousandSecond)
         .putString(KEY_BOT_NAME_KOZEL, settings.botNameKozel)
         .putString(KEY_BOT_NAME_KOZEL_SECOND, settings.botNameKozelSecond)
+        .putString(KEY_BOT_NAME_HUNDRED, settings.botNameHundred)
+        .putString(KEY_BOT_NAME_HUNDRED_SECOND, settings.botNameHundredSecond)
         .putInt(KEY_THOUSAND_SEATS, settings.thousandSeats.coerceIn(2, 3))
         .putInt(KEY_DURAK_SEATS, settings.durakSeats.coerceIn(2, 3))
         .putInt(KEY_KOZEL_SEATS, settings.kozelSeats.coerceIn(2, 3))
+        .putInt(KEY_HUNDRED_SEATS, settings.hundredSeats.coerceIn(2, 3))
         .putBoolean(KEY_SOUNDS, settings.sounds)
         .putBoolean(KEY_SIGNALS, settings.signals)
         .putBoolean(KEY_VIBRATION, settings.vibration)
@@ -843,6 +918,7 @@ fun saveSettings(context: Context, settings: Settings) {
         .putString(KEY_BOT_DIFFICULTY_DURAK, settings.botDifficultyDurak.name)
         .putString(KEY_BOT_DIFFICULTY_THOUSAND, settings.botDifficultyThousand.name)
         .putString(KEY_BOT_DIFFICULTY_KOZEL, settings.botDifficultyKozel.name)
+        .putString(KEY_BOT_DIFFICULTY_HUNDRED, settings.botDifficultyHundred.name)
         .putString(KEY_ORDER, settings.order.name)
         .putString(KEY_TILE_ORDER, settings.tileOrder.name)
         .putString(KEY_LAST_GAME, settings.lastGame)
