@@ -794,7 +794,21 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
                 is Update.Check.Failed -> {
                     checking = false
-                    announce("Не вышло проверить обновление: ${found.reason}.")
+                    // Если приложению закрыт доступ к сети, чинится это только
+                    // в разрешениях телефона — и вести туда надо сразу, иначе
+                    // игрок остаётся с отказом и без подсказки, где искать.
+                    val blocked = found.network && Update.networkIsUp(context)
+                    announce(
+                        "Не вышло проверить обновление: ${found.reason}." +
+                            if (blocked) {
+                                " Открою настройки приложения — доступ к интернету выдаётся там."
+                            } else {
+                                ""
+                            },
+                    )
+                    if (blocked) {
+                        runCatching { context.startActivity(Update.appSettingsIntent(context)) }
+                    }
                 }
             }
         }
