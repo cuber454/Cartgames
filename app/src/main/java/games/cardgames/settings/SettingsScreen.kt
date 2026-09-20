@@ -362,7 +362,13 @@ private fun sampleFor(index: Int, total: Int): String =
  * много, а найти среди них нужный перебором нельзя.
  */
 @Composable
-fun SettingsScreen(game: String?, onExit: () -> Unit) {
+fun SettingsScreen(
+    game: String?,
+    part: SettingsPart,
+    onPart: (SettingsPart) -> Unit,
+    onAbout: () -> Unit,
+    onExit: () -> Unit,
+) {
     val context = LocalContext.current
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
@@ -373,11 +379,13 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     var checking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    // Что открыто: настройки своей игры или общие для всей программы.
-    // Из главного меню общие — единственное, что есть, и переключателя там
-    // не нужно. Из-за стола их двое, и по умолчанию открыта игра: за ней и
-    // лезут в настройки посреди партии.
-    var part by remember { mutableStateOf(if (game == null) SettingsPart.COMMON else SettingsPart.GAME) }
+    // Что открыто: настройки своей игры или общие для всей программы, —
+    // решает не этот экран, а тот, кто его открыл ([SettingsPart]). Из главного
+    // меню общие — единственное, что есть, и переключателя там не нужно.
+    // Из-за стола их двое, и по умолчанию открыта игра: за ней и лезут
+    // в настройки посреди партии. Половина живёт снаружи, а не здесь: за
+    // «О программе» этот экран уходит из разметки целиком, и своё «где я»
+    // ему негде было бы пережить возвращение.
 
     // Размер журнала читаем при входе: по нему видно, есть ли что отправлять,
     // не открывая файл. За время на экране он растёт — но это уже неважно,
@@ -1029,12 +1037,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
         if (game != null) {
             if (part == SettingsPart.GAME) {
                 SettingButton("Общие настройки: речь, звук, порядок карт, журнал") {
-                    part = SettingsPart.COMMON
+                    onPart(SettingsPart.COMMON)
                     announce("Общие настройки для всей программы.")
                 }
             } else {
                 SettingButton("Настройки игры: ${gameTitle(game)}") {
-                    part = SettingsPart.GAME
+                    onPart(SettingsPart.GAME)
                     announce("Настройки игры ${gameTitle(game)}.")
                 }
             }
@@ -1129,7 +1137,8 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
             // строки договорённостей у него нет. Пустой список здесь не
             // украшение, а ответ: без него сюда просочились бы договорённости
             // «Дурака» — перевод и «проигравший заходит», — и игрок увидел бы
-            // в настройках «101» ручки, которых эта игра не читает.
+            // в настройках «101» ручки, которых эта игра не читает
+            // (SETTINGS.md, 12).
             val rules = when (game) {
                 GAME_KOZEL -> KOZEL_SETTINGS
                 GAME_THOUSAND -> THOUSAND_SETTINGS
@@ -1241,6 +1250,22 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 announce(if (value) "Реплики соперника включены." else "Реплики соперника выключены.")
             }
 
+            // Болтовня и прибаутки стоят рядом с репликами соперника: всё это
+            // про то, что говорят за столом, и различаются только тем, о чём.
+            // Реплики — про ход, без них игра непонятна; болтовня — про всё
+            // остальное, что стряслось; прибаутки — про исход партии. Одной
+            // ручкой их не сделать: слышны в разные моменты, и одно может
+            // нравиться без другого (HUNDRED_ONE.md, 5).
+            SettingSwitch("Болтовня за столом", settings.tableTalk) { value ->
+                save(settings.copy(tableTalk = value))
+                announce(if (value) "Болтовня за столом включена." else "Болтовня за столом выключена.")
+            }
+
+            SettingSwitch("Прибаутки", settings.matchJokes) { value ->
+                save(settings.copy(matchJokes = value))
+                announce(if (value) "Прибаутки включены." else "Прибаутки выключены.")
+            }
+
             // Пауза между репликами — рядом с репликами соперника: она про них
             // и про всё, что за столом говорят подряд. Кнопкой по кругу, а не
             // ползунком, и по той же причине, что и скорость: ступеней мало, а
@@ -1290,6 +1315,28 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
 
             Text("Общее", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
+
+            // Имя и род — про того, кто играет, а не про игру: за столом он
+            // один, и имя у него одно на все четыре стола. Пустое имя не
+            // ошибка и не «пока не заполнено»: без него игрока зовут «ты»,
+            // и это такое же обращение, как любое другое (SETTINGS.md, 8).
+            nameRow("Как тебя звать", settings.playerName, "ты") { value ->
+                save(settings.copy(playerName = value))
+            }
+
+            // Кнопкой по кругу, а не переключателем: состояний два, но
+            // «выключено» тут не бывает — кто-то за столом есть всегда, и
+            // вопрос только в том, в каком роде о нём говорить.
+            SettingButton("Кто играет: ${settings.playerGender.title}") {
+                val next = settings.playerGender.next()
+                save(settings.copy(playerGender = next))
+                announce(
+                    when (next) {
+                        Gender.HE -> "Кто играет: он. Фразы будут в мужском роде."
+                        Gender.SHE -> "Кто играет: она. Фразы будут в женском роде."
+                    },
+                )
+            }
 
             SettingButton("Порядок карт: ${settings.order.title}") {
                 val next = settings.order.next()
@@ -1427,6 +1474,15 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 journalSize = "пусто"
                 announce("Журнал очищен.")
             }
+
+            Spacer(Modifier.height(16.dp))
+
+            // --- О программе ----------------------------------------------------
+
+            // Внизу, за журналом: сюда заходят один раз, а не по делу. Текст
+            // читается построчно на своём экране ([AboutScreen]) — абзацем его
+            // на слух не удержать, и перечитать нельзя.
+            SettingButton("О программе") { onAbout() }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -1564,8 +1620,14 @@ private fun PickerOption(label: String, selected: Boolean, onClick: () -> Unit) 
 }
 
 /** Название игры в шапке её блока: то же, что на экране самой игры. */
-/** Какая половина настроек открыта. Из главного меню половина всегда одна — [COMMON]. */
-private enum class SettingsPart { GAME, COMMON }
+/**
+ * Какая половина настроек открыта. Из главного меню половина всегда одна — [COMMON].
+ *
+ * Знает её тот, кто открыл настройки ([games.cardgames.App]): за «О программе»
+ * экран настроек уходит из разметки, и своё «где я» ему негде пережить
+ * возвращение — вернувшись, он открылся бы не на той половине.
+ */
+enum class SettingsPart { GAME, COMMON }
 
 private fun gameTitle(game: String): String = when (game) {
     GAME_KOZEL -> "Козёл"

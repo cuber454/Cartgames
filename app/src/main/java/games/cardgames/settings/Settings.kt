@@ -42,6 +42,34 @@ enum class VoiceMode(val title: String) {
 }
 
 /**
+ * Кто играет: он или она.
+ *
+ * Нужно там, где фразу иначе не построить. За столом приложение обходится
+ * настоящим временем — «выходишь», «берёшь», — и род в нём не виден; но
+ * прошедшее время его показывает, а исход партии иначе не объявить: «Ты вышел»
+ * и «Ты вышла» — разные слова. Прибаутки на исход матча — то же самое.
+ *
+ * По умолчанию «он»: приложение не знает, кто за столом, и до ответа игрока
+ * говорит как говорило (HUNDRED_ONE.md, 6).
+ *
+ * Женский род — не «+а» к любому слову: у существительных он свой — «дурак» и
+ * «дура», «козёл» и «коза», — поэтому их спрашивают отдельно, [noun].
+ */
+enum class Gender(val title: String) {
+    HE("он"),
+    SHE("она"),
+    ;
+
+    fun next(): Gender = entries[(ordinal + 1) % entries.size]
+
+    /** Прошедшее время: «вышел» — «вышла», «набрал» — «набрала». */
+    fun past(male: String): String = if (this == SHE) male + "а" else male
+
+    /** Слово, у которого женский род не выводится из мужского. */
+    fun noun(male: String, female: String): String = if (this == SHE) female else male
+}
+
+/**
  * Пределы скорости речи. Ниже 0.5 синтезатор уже не разобрать; верхнюю
  * границу просил поднять сам владелец — привыкший к быстрой речи слушает
  * на трёх, а не на полутора. Дальше четырёх движки всё равно не тянут.
@@ -242,10 +270,13 @@ fun withSeats(settings: Settings, game: String, seats: Int): Settings = when (ga
  *
  * Место игрока тоже в списке: так у фразы один способ позвать кого угодно, и
  * нет ветки «а если это я» в каждом месте, где называют место за столом.
+ *
+ * Имя игрока приходит сюда же ([playerTitle]): назвал — о его месте говорят
+ * именем, не назвал — «ты», как было.
  */
 fun seatTitles(settings: Settings, game: String, seats: Int): List<String> = List(seats) { seat ->
     when (seat) {
-        0 -> "ты"
+        0 -> playerTitle(settings)
         // Имя зовётся там, где о сопернике говорит само приложение: счёт,
         // взятка, снос, исход кона. Свою же речь бот ведёт от первого лица —
         // но только за столом на двоих, где различать нечего: там имя звучит
@@ -258,6 +289,15 @@ fun seatTitles(settings: Settings, game: String, seats: Int): List<String> = Lis
 
 /** Сколько мест за столом — словами: «двое» или «трое». */
 fun seatsTitle(seats: Int): String = if (seats >= 3) "трое" else "двое"
+
+/**
+ * Как звать игрока: имя, а не назвал — «ты».
+ *
+ * Пустое имя тут не ошибка и не «пока не заполнено»: приложение не заводит
+ * игрока в список — оно с ним говорит, и «ты» в этом разговоре имя такое же
+ * настоящее, как любое другое.
+ */
+fun playerTitle(settings: Settings): String = settings.playerName.trim().ifEmpty { "ты" }
 
 /**
  * Что сказать, когда мест за столом стало больше или меньше.
@@ -483,6 +523,38 @@ data class Settings(
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
     /**
+     * Болтовня за столом: реплики о том, что стряслось помимо хода, — рука
+     * полна, подряд пропускают, игрок забрал со стола.
+     *
+     * Отдельно от [botTalk]: там соперник называет свой ход, и без этого игра
+     * непонятна; здесь он говорит о своём, и без этого играть можно. Ручка
+     * одна на две вещи: выключенная болтовня гасит и подколы — дробить их
+     * заранее не за что (HUNDRED_ONE.md, 5).
+     */
+    val tableTalk: Boolean = true,
+    /**
+     * Прибаутки: одна фраза после матча — на победу и на проигрыш.
+     *
+     * Отдельно от [tableTalk]: слышны в разные моменты, и одно может
+     * нравиться без другого (HUNDRED_ONE.md, 5). По умолчанию и то и другое
+     * включено.
+     */
+    val matchJokes: Boolean = true,
+    /**
+     * Как звать игрока. Пусто — «ты».
+     *
+     * Имя звучит там, где о месте игрока говорит само приложение: «Катя
+     * выходит». Обращения к нему — «Тебе 34», «Твой ход» — остаются на «ты»:
+     * имя в них звучало бы окликом, а не речью за столом, и подставлять его
+     * в каждую фразу значило бы звать игрока по имени чаще, чем это делают
+     * живые люди (HUNDRED_ONE.md, 5, SETTINGS.md, 8).
+     */
+    val playerName: String = "",
+    /**
+     * Кто играет: он или она. Нужно прошедшему времени и прибауткам.
+     */
+    val playerGender: Gender = Gender.HE,
+    /**
      * Пауза между репликами за столом, в миллисекундах. Ноль — выключена.
      *
      * Тишина не между звуком и речью и не между картой и ходом, а между двумя
@@ -695,6 +767,10 @@ private const val KEY_BOT_RATE_HUNDRED = "bot_rate_hundred"
 private const val KEY_BOT_RATE_HUNDRED_SECOND = "bot_rate_hundred_second"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
+private const val KEY_TABLE_TALK = "table_talk"
+private const val KEY_MATCH_JOKES = "match_jokes"
+private const val KEY_PLAYER_NAME = "player_name"
+private const val KEY_PLAYER_GENDER = "player_gender"
 private const val KEY_PHRASE_PAUSE = "phrase_pause"
 private const val KEY_BOT_NAME_DURAK = "bot_name_durak"
 private const val KEY_BOT_NAME_DURAK_SECOND = "bot_name_durak_second"
@@ -776,6 +852,12 @@ fun loadSettings(context: Context): Settings {
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
+        tableTalk = prefs.getBoolean(KEY_TABLE_TALK, true),
+        matchJokes = prefs.getBoolean(KEY_MATCH_JOKES, true),
+        playerName = prefs.getString(KEY_PLAYER_NAME, null) ?: "",
+        playerGender = prefs.getString(KEY_PLAYER_GENDER, null)
+            ?.let { name -> runCatching { Gender.valueOf(name) }.getOrNull() }
+            ?: Gender.HE,
         phrasePauseMs = readPhrasePause(prefs),
         botNameDurak = readBotName(prefs, KEY_BOT_NAME_DURAK, KEY_BOT_NAME),
         botNameDurakSecond = readBotName(prefs, KEY_BOT_NAME_DURAK_SECOND, KEY_BOT_NAME_SECOND),
@@ -898,6 +980,10 @@ fun saveSettings(context: Context, settings: Settings) {
         .putFloat(KEY_BOT_RATE_HUNDRED_SECOND, settings.botRateHundredSecond)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
+        .putBoolean(KEY_TABLE_TALK, settings.tableTalk)
+        .putBoolean(KEY_MATCH_JOKES, settings.matchJokes)
+        .putString(KEY_PLAYER_NAME, settings.playerName)
+        .putString(KEY_PLAYER_GENDER, settings.playerGender.name)
         .putInt(KEY_PHRASE_PAUSE, settings.phrasePauseMs)
         .putString(KEY_BOT_NAME_DURAK, settings.botNameDurak)
         .putString(KEY_BOT_NAME_DURAK_SECOND, settings.botNameDurakSecond)

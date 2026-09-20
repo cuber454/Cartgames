@@ -21,6 +21,15 @@ class HundredBotTest {
 
     private fun card(rank: Rank, suit: Suit) = Card(rank, suit)
 
+    /**
+     * Ход бота, а на конце кона — «играем дальше»: раздачу движок сам не
+     * начинает, и без этого ответа матч за столом встал бы ([Hundred.nextDeal]).
+     */
+    private fun Hundred.step(seat: Int, move: HundredMove) {
+        apply(seat, move)
+        if (awaitingDeal()) nextDeal()
+    }
+
     /** Ход бота всегда среди допустимых — этого от него и требуется. */
     @Test
     fun `бот ходит только законно`() {
@@ -36,7 +45,7 @@ class HundredBotTest {
                     move in game.legalMoves(seat),
                     "незаконный ход: $move (ходы ${game.legalMoves(seat)})",
                 )
-                game.apply(seat, move)
+                game.step(seat, move)
                 moves++
             }
         }
@@ -134,7 +143,7 @@ class HundredBotTest {
                 val seat = game.turn
                 val move = HundredBot.chooseMove(game, seat, Difficulty.NORMAL, random)
                 if (move == null) break
-                game.apply(seat, move)
+                game.step(seat, move)
                 moves++
             }
 
@@ -158,7 +167,7 @@ class HundredBotTest {
             while (!game.finished && moves < 20_000) {
                 val seat = game.turn
                 val move = HundredBot.chooseMove(game, seat, Difficulty.CLEVER, random) ?: break
-                game.apply(seat, move)
+                game.step(seat, move)
                 moves++
             }
 

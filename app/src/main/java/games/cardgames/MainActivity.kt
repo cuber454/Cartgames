@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import games.cardgames.about.AboutScreen
 import games.cardgames.diag.Journal
 import games.cardgames.durak.DurakScreen
 import games.cardgames.durak.DurakSession
@@ -46,6 +47,7 @@ import games.cardgames.rules.hundredRules
 import games.cardgames.rules.kozelRules
 import games.cardgames.rules.thousandRules
 import games.cardgames.score.loadScore
+import games.cardgames.settings.SettingsPart
 import games.cardgames.settings.SettingsScreen
 import games.cardgames.settings.loadSettings
 import games.cardgames.speech.Speaker
@@ -103,6 +105,11 @@ private fun App() {
     // партии — во втором случае возвращаемся за тот же стол.
     var settingsBack by remember { mutableStateOf("games") }
 
+    // Какая половина настроек открыта — живёт здесь, а не в самих настройках:
+    // за «О программе» экран настроек уходит из разметки, и свою половину ему
+    // негде пережить возвращение (SETTINGS.md, 2).
+    var settingsPart by remember { mutableStateOf(SettingsPart.COMMON) }
+
     // Справка по правилам — из того же места, откуда и настройки: посреди
     // партии в неё тоже заглядывают, и вернуться надо за тот же стол.
     var rulesBack by remember { mutableStateOf("games") }
@@ -133,6 +140,9 @@ private fun App() {
 
     fun openSettings(from: String) {
         settingsBack = from
+        // Из списка игр общие — единственное, что есть; из-за стола первым
+        // делом открывается игра, за ней туда и лезут.
+        settingsPart = if (from == "games") SettingsPart.COMMON else SettingsPart.GAME
         screen = "settings"
     }
 
@@ -149,6 +159,9 @@ private fun App() {
         screen = when (screen) {
             "settings" -> settingsBack
             "rules" -> rulesBack
+            // Из «О программе» — назад в настройки, к той же половине: оттуда
+            // сюда и заходили.
+            "about" -> "settings"
             // Из-за стола и от вопроса выходим в список игр: там рядом
             // остальные игры, и за стол возвращаются одним нажатием.
             else -> "games"
@@ -188,8 +201,15 @@ private fun App() {
         // с правилами и соперником этой игры (SETTINGS.md, 2).
         "settings" -> SettingsScreen(
             game = settingsBack.takeIf { it != "games" },
+            part = settingsPart,
+            onPart = { settingsPart = it },
+            onAbout = { screen = "about" },
             onExit = { screen = settingsBack },
         )
+
+        // О программе — из настроек и обратно в них же: заходят сюда один раз
+        // и возвращаются к тому месту, откуда пришли.
+        "about" -> AboutScreen(onExit = { screen = "settings" })
 
         "rules" -> when (rulesGame) {
             GAME_HUNDRED -> RulesScreen(

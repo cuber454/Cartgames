@@ -76,7 +76,17 @@ class HundredSession(context: Context) {
         private set
 
     /**
-     * Матч для игрока кончен — он выбыл или остался за столом один.
+     * Игрок встал из-за стола сам: на вопрос «играем дальше?» ответил
+     * «хватит». Матч на этом не кончен — кончился он для игрока, и это разные
+     * вещи: движок стоит между конами, счёт цел, и вернуться можно новой
+     * партией (правило Катерины, 20.09).
+     */
+    var stoppedByChoice by mutableStateOf(false)
+        private set
+
+    /**
+     * Матч для игрока кончен — он выбыл, остался за столом один или сам сказал
+     * «хватит».
      *
      * Не то же, что [Hundred.finished]: движок играет матч до последнего
      * живого, и после того, как игрок выбыл, за столом ещё двое. Для игрока
@@ -84,7 +94,8 @@ class HundredSession(context: Context) {
      * партию, а не оставлять его слушать, как соперники доигрывают без него
      * (HUNDRED_ONE.md, 2.8).
      */
-    val overForPlayer: Boolean get() = match.finished || match.isOut(PLAYER_SEAT)
+    val overForPlayer: Boolean
+        get() = stoppedByChoice || match.finished || match.isOut(PLAYER_SEAT)
 
     init {
         val text = loadGameText(appContext, GAME_HUNDRED)
@@ -132,7 +143,19 @@ class HundredSession(context: Context) {
         )
         lastPhrase = ""
         restored = false
+        stoppedByChoice = false
         forgetSaved()
+        tick++
+    }
+
+    /**
+     * Игрок ответил «хватит». Раздачу не начинаем ([Hundred.awaitingDeal]), и
+     * запись с этого места не идёт — но и не стирается: на диске остаётся
+     * конец последнего кона, и вход в игру снова спросит про него. Сказанное
+     * «хватит» стирает стол молча, а передумать после него — обычное дело.
+     */
+    fun stopByChoice() {
+        stoppedByChoice = true
         tick++
     }
 

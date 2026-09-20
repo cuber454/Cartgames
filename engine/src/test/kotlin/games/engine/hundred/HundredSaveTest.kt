@@ -7,8 +7,10 @@ import games.engine.fullDeck36
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Запись матча «101» на диск и обратно. Суть матча — счёт и выбывшие: без них
@@ -83,6 +85,108 @@ class HundredSaveTest {
 
         assertNotNull(restored)
         assertEquals(2, restored.stockTurnovers())
+    }
+
+    /**
+     * Непокрытая девятка — часть кона, а не украшение: без неё после
+     * перезапуска ход пошёл бы дальше, и девятка осталась бы лежать некрытой.
+     */
+    @Test
+    fun `непокрытая девятка переживает запись`() {
+        val nine = Card(Rank.NINE, Suit.CLUBS)
+        val seven = Card(Rank.SEVEN, Suit.SPADES)
+        val ace = Card(Rank.ACE, Suit.DIAMONDS)
+        val game = Hundred.forTesting(
+            playerCount = 2,
+            hands = listOf(listOf(seven), listOf(ace)),
+            pile = listOf(nine),
+            stock = restOf(listOf(nine, seven, ace)),
+            turn = 0,
+            cover = nine,
+        )
+
+        val restored = HundredSave.read(HundredSave.write(game))
+
+        assertNotNull(restored)
+        assertEquals(nine, restored.coverCard())
+    }
+
+    /**
+     * Заказ масти — тоже состояние кона: забыв его, стол после перезапуска
+     * пустил бы ходить чем угодно, хотя дама заказала одну масть.
+     */
+    @Test
+    fun `заказ масти переживает запись`() {
+        val queen = Card(Rank.QUEEN, Suit.DIAMONDS)
+        val seven = Card(Rank.SEVEN, Suit.SPADES)
+        val ace = Card(Rank.ACE, Suit.CLUBS)
+        val game = Hundred.forTesting(
+            playerCount = 2,
+            hands = listOf(listOf(seven), listOf(ace)),
+            pile = listOf(queen),
+            stock = restOf(listOf(queen, seven, ace)),
+            turn = 0,
+            order = Suit.HEARTS,
+        )
+
+        val restored = HundredSave.read(HundredSave.write(game))
+
+        assertNotNull(restored)
+        assertEquals(Suit.HEARTS, restored.orderedSuit())
+    }
+
+    /**
+     * Стол, поднятый между конами: кон сыгран, раздачи ещё нет. Без этой
+     * строки игрок после перезапуска получил бы раздачу, которую не заказывал,
+     * — а он на ней ещё и не ответил.
+     */
+    @Test
+    fun `конец кона переживает запись`() {
+        val seven = Card(Rank.SEVEN, Suit.SPADES)
+        val ace = Card(Rank.ACE, Suit.CLUBS)
+        val top = Card(Rank.SEVEN, Suit.DIAMONDS)
+        val game = Hundred.forTesting(
+            playerCount = 2,
+            hands = listOf(emptyList(), listOf(ace)),
+            pile = listOf(top, seven),
+            stock = restOf(listOf(seven, ace, top)),
+            turn = 0,
+            awaiting = true,
+        )
+
+        val restored = HundredSave.read(HundredSave.write(game))
+
+        assertNotNull(restored)
+        assertTrue(restored.awaitingDeal())
+    }
+
+    /** Раздача идёт — и это тот же формат: строки нет, стол обычный. */
+    @Test
+    fun `идущий кон читается без строки ожидания`() {
+        val game = Hundred.start(random = Random(16), playerCount = 2)
+
+        val restored = HundredSave.read(HundredSave.write(game))
+
+        assertNotNull(restored)
+        assertFalse(restored.awaitingDeal())
+    }
+
+    /** Заказ без дамы на кону — запись, которой не бывает. */
+    @Test
+    fun `заказ без дамы отвергает запись`() {
+        val seven = Card(Rank.SEVEN, Suit.SPADES)
+        val ace = Card(Rank.ACE, Suit.CLUBS)
+        val top = Card(Rank.TEN, Suit.DIAMONDS)
+        val game = Hundred.forTesting(
+            playerCount = 2,
+            hands = listOf(listOf(seven), listOf(ace)),
+            pile = listOf(top),
+            stock = restOf(listOf(seven, ace, top)),
+            turn = 0,
+        )
+        val text = HundredSave.write(game) + "\norder H"
+
+        assertNull(HundredSave.read(text))
     }
 
     /** Две карты одного достоинства и масти в записи — это не колода. */
