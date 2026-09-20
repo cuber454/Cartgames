@@ -310,6 +310,35 @@ fun nextBotRate(value: Float): Float {
     return BOT_RATES[(at + 1) % BOT_RATES.size]
 }
 
+/**
+ * Пауза между репликами за столом — ступени, которыми её перебирают.
+ *
+ * Ноль — пауза выключена, всё как было. Дальше по секунде: реплики идут
+ * вплотную, и незрячий игрок не успевает сообразить, кто из двоих что сказал
+ * (Катерина, 19.09: «они быстро друг за другом идут, я физически не успеваю
+ * сообразить, кто там что говорит»). Ступеней намеренно мало, и перебирают их
+ * кнопкой, а не ползунком: ползунок незрячему неудобен, а «две тысячи
+ * миллисекунд» ничего не говорят — то же правило, что у скорости речи.
+ */
+val PHRASE_PAUSES: List<Int> = listOf(0, 1000, 2000, 3000)
+
+/** Пауза словами: «2000» человеку ни о чём не говорит, «две секунды» — говорит. */
+fun phrasePauseTitle(ms: Int): String = when {
+    ms <= 0 -> "выключена"
+    ms == 1000 -> "1 секунда"
+    else -> "${ms / 1000} секунды"
+}
+
+/**
+ * Следующая ступень паузы — по кругу. Ближайшая ступень, а не точное
+ * совпадение: пауза приходит из хранилища, и кнопка, которая на чужом числе
+ * просто молчит, хуже кнопки, которая с него начинает.
+ */
+fun nextPhrasePause(ms: Int): Int {
+    val at = PHRASE_PAUSES.indices.minByOrNull { kotlin.math.abs(PHRASE_PAUSES[it] - ms) } ?: 0
+    return PHRASE_PAUSES[(at + 1) % PHRASE_PAUSES.size]
+}
+
 /** Скорость словами: «1.35» человеку ни о чём не говорит, «быстро» — говорит. */
 fun rateTitle(value: Float): String = when {
     value < 0.8f -> "очень медленно"
@@ -425,6 +454,15 @@ data class Settings(
     val botRateKozelSecond: Float = 1.0f,
     val voiceMode: VoiceMode = VoiceMode.AUTO,
     val botTalk: Boolean = true,
+    /**
+     * Пауза между репликами за столом, в миллисекундах. Ноль — выключена.
+     *
+     * Тишина не между звуком и речью и не между картой и ходом, а между двумя
+     * фразами: игроку нужно время не услышать, а сообразить, кто сказал и что
+     * именно. Ответы на собственные нажатия пауза не задерживает — там ждать
+     * нечего.
+     */
+    val phrasePauseMs: Int = 0,
     /**
      * Как звать соперника — у каждой игры своё имя.
      *
@@ -605,6 +643,7 @@ private const val KEY_BOT_RATE_KOZEL = "bot_rate_kozel"
 private const val KEY_BOT_RATE_KOZEL_SECOND = "bot_rate_kozel_second"
 private const val KEY_VOICE_MODE = "voice_mode"
 private const val KEY_BOT_TALK = "bot_talk"
+private const val KEY_PHRASE_PAUSE = "phrase_pause"
 private const val KEY_BOT_NAME_DURAK = "bot_name_durak"
 private const val KEY_BOT_NAME_DURAK_SECOND = "bot_name_durak_second"
 private const val KEY_BOT_NAME_THOUSAND = "bot_name_thousand"
@@ -675,6 +714,7 @@ fun loadSettings(context: Context): Settings {
             ?.let { name -> runCatching { VoiceMode.valueOf(name) }.getOrNull() }
             ?: VoiceMode.AUTO,
         botTalk = prefs.getBoolean(KEY_BOT_TALK, true),
+        phrasePauseMs = readPhrasePause(prefs),
         botNameDurak = readBotName(prefs, KEY_BOT_NAME_DURAK, KEY_BOT_NAME),
         botNameDurakSecond = readBotName(prefs, KEY_BOT_NAME_DURAK_SECOND, KEY_BOT_NAME_SECOND),
         botNameThousand = readBotName(prefs, KEY_BOT_NAME_THOUSAND, KEY_BOT_NAME),
@@ -721,6 +761,18 @@ private fun readRate(prefs: SharedPreferences): Float =
  */
 private fun readBotRate(prefs: SharedPreferences, key: String): Float =
     (prefs.all[key] as? Float)?.coerceIn(RATE_MIN, RATE_MAX) ?: 1.0f
+
+/**
+ * Пауза между репликами из хранилища. Ключа нет — выключена: игра, к которой
+ * игрок привык, не должна меняться от обновления.
+ *
+ * Число приводим к ближайшей ступени: в хранилище его мог положить кто угодно,
+ * а ступени — единственное, что умеет кнопка настройки.
+ */
+private fun readPhrasePause(prefs: SharedPreferences): Int {
+    val stored = (prefs.all[KEY_PHRASE_PAUSE] as? Int) ?: return 0
+    return PHRASE_PAUSES.minByOrNull { kotlin.math.abs(it - stored) } ?: 0
+}
 
 /**
  * Имя соперника из хранилища. Своего у игры ещё нет — берём прежнее общее:
@@ -774,6 +826,7 @@ fun saveSettings(context: Context, settings: Settings) {
         .putFloat(KEY_BOT_RATE_KOZEL_SECOND, settings.botRateKozelSecond)
         .putString(KEY_VOICE_MODE, settings.voiceMode.name)
         .putBoolean(KEY_BOT_TALK, settings.botTalk)
+        .putInt(KEY_PHRASE_PAUSE, settings.phrasePauseMs)
         .putString(KEY_BOT_NAME_DURAK, settings.botNameDurak)
         .putString(KEY_BOT_NAME_DURAK_SECOND, settings.botNameDurakSecond)
         .putString(KEY_BOT_NAME_THOUSAND, settings.botNameThousand)

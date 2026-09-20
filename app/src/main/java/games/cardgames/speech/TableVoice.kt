@@ -77,6 +77,14 @@ class TableVoice(
     private val rate: () -> Float,
     private val scope: CoroutineScope,
     private val minWaitMs: Long,
+    /**
+     * Пауза между репликами за столом, в миллисекундах: сколько тишины держать
+     * после фразы, прежде чем начнётся следующая. Ноль — как было.
+     *
+     * Лямбдой, а не числом: паузу выбирают в настройках, и живой экран должен
+     * спрашивать её сам — как и [speech] с [rate].
+     */
+    private val pauseMs: () -> Long = { 0L },
     private val remember: (String) -> Unit,
 ) {
 
@@ -199,8 +207,18 @@ class TableVoice(
         sayEvent(view, speaker, now, text)
     }
 
-    /** Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]. */
-    fun waitMs(): Long = (endsAt - System.currentTimeMillis()).coerceAtLeast(minWaitMs)
+    /**
+     * Сколько ещё ждать, чтобы не перебить сказанное: минимум [minWaitMs]
+     * плюс пауза, выбранная игроком.
+     *
+     * Пауза входит сюда, а не в длину фразы: её ждут перед следующим событием
+     * за столом — ходом бота, сведением стола, «твой ход», — и ни одно из них
+     * не начинается раньше. Ответы на нажатия игрока сюда не ходят
+     * ([sayRequested], [sayOwnMove]): там пауза была бы задержкой ответа на
+     * собственную кнопку, а не тишиной между говорящими.
+     */
+    fun waitMs(): Long =
+        (endsAt - System.currentTimeMillis()).coerceAtLeast(minWaitMs) + pauseMs()
 
     /**
      * Слышно ли это место отдельно от приложения — своим голосом или своим

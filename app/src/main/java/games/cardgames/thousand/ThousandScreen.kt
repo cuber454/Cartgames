@@ -264,6 +264,7 @@ fun ThousandScreen(
             rate = { rateNow.value },
             scope = scope,
             minWaitMs = BOT_DELAY_MS,
+            pauseMs = { settings.phrasePauseMs.toLong() },
             remember = { session.lastPhrase = it },
         )
     }
@@ -318,16 +319,20 @@ fun ThousandScreen(
      * [afterMs] — сколько звучит фраза того, кто сносил: с неё и начинаем.
      */
     fun sayDiscardReceivers(seat: Int, move: ThousandMove, round: ThousandRound, afterMs: Long) {
-        var wait = afterMs
+        // Снос на троих — это реплики двух получателей подряд, и между ними та
+        // же пауза, что и везде за столом: без неё вторая карта приходит на
+        // хвосте первой, и кто из двоих её получил, на слух не разобрать.
+        val between = PHRASE_GAP_MS + settings.phrasePauseMs
+        var wait = afterMs + settings.phrasePauseMs
         discardTargets(round, seat, move).forEach { (to, card) ->
             if (to == PLAYER) {
                 val line = "Получаешь ${card.spokenAccusative()}."
                 voice.say(line, afterMs = wait)
-                wait += speechMs(line, settings.rate) + PHRASE_GAP_MS
+                wait += speechMs(line, settings.rate) + between
             } else {
                 val line = "Мне дали ${card.spokenAccusative()}."
                 sayBot(to, line, afterMs = wait)
-                wait += speechMs(line, seatRate(to)) + PHRASE_GAP_MS
+                wait += speechMs(line, seatRate(to)) + between
             }
         }
     }
