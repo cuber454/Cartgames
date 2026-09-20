@@ -291,14 +291,37 @@ private fun GamesScreen(
         speaker.say("Игры. Дурак, тысяча, козёл. ${score.spoken()}$tail")
     }
 
-    // Новая сборка не должна ждать, пока игрок заглянет в настройки: о ней
-    // приложение говорит при входе, как и раньше. Скачивание и установка
-    // живут в настройках — там же, где и был их дом.
+    // Итог установки, которую доводила система, и новость о новой сборке —
+    // одним заходом, а не двумя: две фразы подряд перебивают друг друга, и
+    // первая осталась бы недослушанной.
     LaunchedEffect(Unit) {
-        if (!settings.autoUpdate || !speech.speaks) return@LaunchedEffect
+        if (!speech.speaks) return@LaunchedEffect
+
+        // Итог прошлой установки — первым: игрок в этот момент смотрит, что
+        // стало с приложением, и о неудаче узнать больше неоткуда. Сказанное
+        // здесь стирается: сказанное дважды — не сказанное.
+        Update.takeOutcome(context)?.let { speaker.say(it, interrupt = false) }
+
+        if (!settings.autoUpdate) return@LaunchedEffect
         val found = withContext(Dispatchers.IO) { Update.check(BuildConfig.VERSION_CODE) }
-        if (found is Update.Check.Fresh) {
-            speaker.say("Вышла новая версия ${found.release.title}. Скачать и поставить её можно в настройках.")
+        if (found !is Update.Check.Fresh) return@LaunchedEffect
+
+        if (!Update.canInstall(context)) {
+            // Разрешение на установку спрашиваем здесь же, если его нет:
+            // иначе игрок придёт в настройки, нажмёт ставить — и не увидит
+            // ничего, потому что система не примет установку без него.
+            speaker.say(
+                "Вышла новая версия ${found.release.title}. " +
+                    "Разреши приложению ставить обновления — сейчас открою экран разрешения.",
+                interrupt = false,
+            )
+            runCatching { context.startActivity(Update.permissionIntent(context)) }
+        } else {
+            speaker.say(
+                "Вышла новая версия ${found.release.title}. " +
+                    "В настройках строка «проверить обновление» поставит её сама.",
+                interrupt = false,
+            )
         }
     }
 
