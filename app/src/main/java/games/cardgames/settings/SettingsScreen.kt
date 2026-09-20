@@ -340,7 +340,6 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
     var settings by remember { mutableStateOf(loadSettings(context)) }
     var readyTick by remember { mutableIntStateOf(0) }
     var resetAsked by remember { mutableStateOf(false) }
-    var clearAsked by remember { mutableStateOf(false) }
 
     // Проверка обновления идёт в сети: пока она идёт, кнопка говорит об этом
     // сама — молчащая кнопка читается как «нажал, и ничего не случилось».
@@ -1368,16 +1367,12 @@ fun SettingsScreen(game: String?, onExit: () -> Unit) {
                 }
             }
 
-            SettingButton(if (clearAsked) "Нажми ещё раз — журнал очистится" else "Очистить журнал") {
-                if (clearAsked) {
-                    Journal.clear()
-                    journalSize = "пусто"
-                    clearAsked = false
-                    announce("Журнал очищен.")
-                } else {
-                    clearAsked = true
-                    announce("Нажми ещё раз, и журнал очистится. Сейчас в нём $journalSize.")
-                }
+            // Чистится одним нажатием, без «нажми ещё раз» (Катерина, 20.09):
+            // журнал — её же след, и лишний вопрос на пути только мешает.
+            SettingButton("Очистить журнал") {
+                Journal.clear()
+                journalSize = "пусто"
+                announce("Журнал очищен.")
             }
         }
 
