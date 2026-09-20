@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import games.cardgames.GAME_KOZEL
+import games.cardgames.settings.Gender
 import games.cardgames.settings.botEngine
 import games.cardgames.settings.botSpeaksAlone
 import games.cardgames.settings.botVoice
@@ -51,10 +52,13 @@ import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.Chatter
 import games.cardgames.speech.FIRST_BOT_SEAT
+import games.cardgames.speech.Jokes
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableEvent
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.sayEvent
 import games.cardgames.speech.speech
@@ -247,6 +251,11 @@ fun KozelScreen(
     // Речь бота живёт выше партии: мешки зачинов должны переживать и
     // перерисовки, и переходы в настройки, иначе повторы вернутся.
     val talker = remember { KozelTalker(rng) }
+    // Разговоры за столом и прибаутки — общий слой на все игры (HUNDRED_ONE.md,
+    // 4.2). Мешок переживает перерисовки: реплика, сказанная до ухода в
+    // настройки, не должна прозвучать второй раз после возвращения.
+    val chatter = remember { Chatter(rng) }
+    val jokes = remember { Jokes(rng) }
     // Открыто ли маленькое меню «Ещё» в углу экрана.
     var menuOpen by remember { mutableStateOf(false) }
     // Кость, которую можно положить на любой конец: спрашиваем, на какой.
@@ -310,6 +319,25 @@ fun KozelScreen(
     fun botLine(seat: Int, text: String): String =
         if (session.match.seats >= 3 && !voice.speaksAlone(seat)) "${names[seat]}, $text" else text
 
+    /**
+     * Разговор за столом — о том, что случилось у игрока.
+     *
+     * Реплику говорит соперник и всегда со стороны ([TableEvent]): о своём ходе
+     * он уже сказал сам ([KozelTalker]), и второй раз про то же — два голоса об
+     * одном (HUNDRED_ONE.md, 4.2). За игрока не говорит никто, кроме
+     * приложения, которое называет ход, — вот тут за столом есть что сказать.
+     *
+     * Реплика идёт за фразой о ходе, а не вместо неё: [TableVoice.waitMs]
+     * отсчитывает, сколько той ещё звучать. Слота хватает одной реплике на
+     * раунд — [Chatter.newRound] зовётся там, где раунд кончается.
+     */
+    fun talk(event: TableEvent, seat: Int = FIRST_BOT_SEAT) {
+        if (!settings.botTalk || !settings.tableTalk) return
+        val line = chatter.line(event, own = false) ?: return
+        // lastPhrase не трогаем: «Повтори» повторяет ход, а не разговор.
+        voice.sayBot(line, seat = seat, afterMs = voice.waitMs())
+    }
+
     fun soundFor(move: KozelMove) {
         if (!settings.sounds) return
         when (move) {
@@ -339,7 +367,7 @@ fun KozelScreen(
         // сказанное, и только потом считаем вслух. Иначе из двух фраз
         // выживает вторая, и игрок слышит счёт, не услышав своего хода.
         voice.say(
-            roundPhrase(summary, session.match.rules.target, names),
+            roundPhrase(summary, session.match.rules.target, names, settings.playerGender),
             afterMs = voice.waitMs(),
         )
     }
@@ -365,6 +393,13 @@ fun KozelScreen(
             // а не то, что из базара пришло.
             aloud = move is KozelMove.Draw,
         )
+        // Базар и вынужденный пропуск — то, о чём за игрока не сказал никто:
+        // ход приложение назвало, а стол молчит. О своём ходе бот говорит сам.
+        when (move) {
+            KozelMove.Draw -> talk(TableEvent.TOOK)
+            KozelMove.Pass -> talk(TableEvent.PASSED)
+            else -> Unit
+        }
         session.persist()
         session.tick++
     }
@@ -416,6 +451,20 @@ fun KozelScreen(
                 // Доигранный матч хранить нечего: он итог, а не пауза.
                 if (match.over) session.forgetSaved() else session.persist()
                 sayRound(summary)
+                // Прибаутка — второй фразой, тем же голосом: стола уже нет, и
+                // говорить о партии, кроме приложения, некому ([Jokes]). Козёл
+                // и есть итог матча: кто до него дошёл, тот и проиграл.
+                if (settings.matchJokes && summary.goat != null) {
+                    val joke = jokes.afterMatch(
+                        won = summary.goat != PLAYER,
+                        gender = settings.playerGender,
+                    )
+                    voice.say(joke, afterMs = voice.waitMs())
+                }
+                // Раунд кончился — разговор за столом начинается заново:
+                // слот освобождается, и следующий раунд снова есть о чём
+                // сказать (HUNDRED_ONE.md, 4.2).
+                chatter.newRound()
                 played = true
                 continue
             }
@@ -439,6 +488,10 @@ fun KozelScreen(
                 // делал, кнопки не нажимал, и объявить о пропуске, кроме этих
                 // слов, некому. Звука хода тут нет — кости никто не касался.
                 voice.sayOwnMove(ownMovePhrase(KozelMove.Pass, round, false), aloud = true)
+                // Пропуск по правилу — тоже событие за столом: игрок хода не
+                // делал, и сказать о нём, кроме приложения, некому. Соперник
+                // отзывается следом — как отозвался бы человек.
+                talk(TableEvent.PASSED)
                 session.persist()
                 played = true
                 continue
@@ -943,7 +996,12 @@ private fun chooseTitle(tile: Tile, both: KozelMove.PlaceBoth?): String =
  * вышедший не пишет ничего, а каждый из оставшихся считает своё (Катерина,
  * 19.09), поэтому там запись перечисляется по местам.
  */
-private fun roundPhrase(summary: KozelSummary, target: Int, names: List<String>): String = buildString {
+private fun roundPhrase(
+    summary: KozelSummary,
+    target: Int,
+    names: List<String>,
+    gender: Gender,
+): String = buildString {
     if (summary.written.size <= 2) {
         append(
             when {
@@ -957,7 +1015,7 @@ private fun roundPhrase(summary: KozelSummary, target: Int, names: List<String>)
                     "Рыба. У тебя рука тяжелее: тебе записано ${summary.written[PLAYER]}."
 
                 summary.winner == PLAYER ->
-                    "Ты вышел. Сопернику записано ${summary.written[FIRST_BOT_SEAT]}."
+                    "Ты ${gender.past("вышел")}. Сопернику записано ${summary.written[FIRST_BOT_SEAT]}."
 
                 else -> "${names[FIRST_BOT_SEAT]} вышел. Тебе записано ${summary.written[PLAYER]}."
             },
@@ -974,7 +1032,7 @@ private fun roundPhrase(summary: KozelSummary, target: Int, names: List<String>)
         val winner = summary.winner
         append(
             when {
-                winner == PLAYER -> "Ты вышел."
+                winner == PLAYER -> "Ты ${gender.past("вышел")}."
 
                 // Имя здесь подлежащим: падежа оно не требует, а склонять
                 // произвольное имя программа не умеет (SETTINGS.md, 8).

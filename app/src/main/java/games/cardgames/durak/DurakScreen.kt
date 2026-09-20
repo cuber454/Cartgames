@@ -41,6 +41,7 @@ import games.cardgames.GAME_DURAK
 import games.cardgames.score.Outcome
 import games.cardgames.score.Score
 import games.cardgames.score.saveScore
+import games.cardgames.settings.Gender
 import games.cardgames.settings.botEngine
 import games.cardgames.settings.botSpeaksAlone
 import games.cardgames.settings.botVoice
@@ -49,10 +50,13 @@ import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.Chatter
 import games.cardgames.speech.FIRST_BOT_SEAT
+import games.cardgames.speech.Jokes
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableEvent
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.sayEvent
@@ -88,6 +92,16 @@ private const val MAX_SEATS = 3
 
 /** Пауза перед ходом бота, чтобы не тараторил. */
 private const val BOT_DELAY_MS = 700L
+
+/**
+ * Сколько карт на руке — уже ворох, а не рука.
+ *
+ * Раздача кладёт по шесть; восемь и больше набирается только у того, кто
+ * забирал со стола, и это за столом заметно: такую руку держат, а не
+ * раскладывают. По этому числу разговор о взятых картах меняется на разговор
+ * о полной руке ([games.cardgames.speech.TableEvent]).
+ */
+private const val FULL_HAND_SIZE = 8
 
 /** Размер карты в обычном режиме. В крупном он умножается. */
 private const val CARD_WIDTH = 64f
@@ -226,6 +240,11 @@ fun DurakScreen(
     // друг за другом. За столом это слышно как один человек, говорящий
     // попеременно то одним, то другим голосом.
     val talkers = remember { List(MAX_SEATS) { BotTalker(rng) } }
+    // Разговоры за столом и прибаутки — общий слой на все игры (HUNDRED_ONE.md,
+    // 4.2). Живут выше партии, как и мешки зачинов: реплика, сказанная до
+    // ухода в настройки, не должна прозвучать второй раз после возвращения.
+    val chatter = remember { Chatter(rng) }
+    val jokes = remember { Jokes(rng) }
     // Открыто ли маленькое меню «Ещё» в углу экрана.
     var menuOpen by remember { mutableStateOf(false) }
     // Открыт ли выбор карты для перевода.
@@ -291,6 +310,29 @@ fun DurakScreen(
         voice.sayBot(text, seat = seat)
     }
 
+    /**
+     * Разговор за столом — о том, что случилось у игрока.
+     *
+     * Реплику говорит соперник, и всегда со стороны ([TableEvent]): о своём
+     * ходе он уже сказал сам ([BotTalker]: «беру», «бито»), и второй раз про то
+     * же — два голоса об одном (HUNDRED_ONE.md, 4.2). За игрока же не говорит
+     * никто, кроме приложения, которое называет ход, — и вот тут за столом
+     * есть что сказать.
+     *
+     * Реплика идёт за фразой о ходе, а не вместо неё: [TableVoice.waitMs]
+     * отсчитывает, сколько той фразе ещё звучать. Слота хватает одной реплике
+     * на партию — [Chatter.newRound] здесь не зовётся.
+     *
+     * [Chatter] тянет фразу из мешка и сам решает промолчать, поэтому `null`
+     * здесь — обычное дело, а не сбой.
+     */
+    fun talk(event: TableEvent, seat: Int = FIRST_BOT_SEAT) {
+        if (!settings.botTalk || !settings.tableTalk) return
+        val line = chatter.line(event, own = false) ?: return
+        // lastPhrase не трогаем: «Повтори» повторяет ход, а не разговор.
+        voice.sayBot(line, seat = seat, afterMs = voice.waitMs())
+    }
+
     fun soundFor(move: DurakMove) {
         if (!settings.sounds) return
         when (move) {
@@ -347,9 +389,17 @@ fun DurakScreen(
             }
         }
         voice.say(
-            finishPhrase(game, next, names),
+            finishPhrase(game, next, names, settings.playerGender),
             afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
         )
+        // Прибаутка — второй фразой, тем же голосом: стола уже нет, и говорить
+        // о партии, кроме приложения, некому ([Jokes]). Ничья её не получает:
+        // прибаутка бывает про победу или про проигрыш, а ничья — ни то ни сё,
+        // и любая из двух прозвучала бы враньём.
+        if (settings.matchJokes && result != Outcome.DRAW) {
+            val joke = jokes.afterMatch(won = result == Outcome.WIN, gender = settings.playerGender)
+            voice.say(joke, afterMs = voice.waitMs())
+        }
     }
 
     fun newGame() {
@@ -479,13 +529,20 @@ fun DurakScreen(
 
     /** Ход игрока: фраза, звук, толчок и передача хода — в одном месте. */
     fun play(move: DurakMove) {
-        val phrase = ownMovePhrase(move)
+        val phrase = ownMovePhrase(move, settings.playerGender)
         soundFor(move)
         if (settings.ownVibration) vibrations.tap()
         session.game.apply(PLAYER, move)
         // Свой ход звучит так же: сначала карта, потом слово.
         val gap = soundGap(move)
         voice.sayOwnMove(phrase, afterMs = if (gap > 0) gap + PHRASE_GAP_MS else 0L)
+        // Забрал со стола — единственное, о чём за игрока не сказал никто:
+        // приложение назвало ход, а соперник молчит. Про свой «беру» он
+        // говорит сам, и повторять за ним нечего (HUNDRED_ONE.md, 4.2).
+        if (move == DurakMove.Take) {
+            val full = game.handOf(PLAYER).size >= FULL_HAND_SIZE
+            talk(if (full) TableEvent.FULL_HAND else TableEvent.TOOK)
+        }
         session.persist()
         finishIfOver()
         session.tick++
@@ -870,7 +927,7 @@ private fun resumePhrase(game: DurakGame, names: List<String>): String {
  * точность, чем разнообразие: за столом человек и не комментирует свои
  * карты, он просто кладёт их. Речь бота — в [BotTalker].
  */
-private fun ownMovePhrase(move: DurakMove): String = when (move) {
+private fun ownMovePhrase(move: DurakMove, gender: Gender): String = when (move) {
     is DurakMove.Attack -> "Кладёшь ${move.card.spoken()}."
     is DurakMove.Defend -> "Отбиваешься картой ${move.card.spoken()}."
     // Не «отбиваться боту»: дательный падеж имени программа не выведет.
@@ -878,19 +935,27 @@ private fun ownMovePhrase(move: DurakMove): String = when (move) {
     // следующему за столом, а не «сопернику» вообще.
     is DurakMove.Transfer -> "Переводишь: ${move.card.spoken()}. Отбиваться соседу."
     DurakMove.Take -> "Ты забираешь карты со стола."
-    DurakMove.Pass -> "Ты сказал бито. Стол в отбой."
+    // Единственное место в фразе о ходе, где слышен род: остальные — настоящее
+    // время, и в нём «ты» звучит одинаково для обоих (SETTINGS.md, 13).
+    DurakMove.Pass -> "Ты ${gender.past("сказал")} бито. Стол в отбой."
 }
 
-private fun finishPhrase(game: DurakGame, score: Score, names: List<String>): String {
+private fun finishPhrase(
+    game: DurakGame,
+    score: Score,
+    names: List<String>,
+    gender: Gender,
+): String {
     // Про соперника — в настоящем времени: «Меркурий вышел» верно только
     // для мужского имени, а имя игрок выбирает любое (SETTINGS.md, 8).
     val winner = game.winner
     val loser = game.loser
     val result = when {
         winner == null -> "Партия окончена, карт ни у кого не осталось. Ничья."
-        winner == PLAYER && loser != null -> "Ты вышел. ${names[loser]} — дурак."
+        winner == PLAYER && loser != null -> "Ты ${gender.past("вышел")}. ${names[loser]} — дурак."
         loser == PLAYER && winner != null ->
-            "${names[winner]} выходит, у тебя остались карты. Ты дурак."
+            "${names[winner]} выходит, у тебя остались карты. Ты " +
+                gender.noun("дурак", "дура") + "."
 
         // На троих игрок может быть и ни тем, ни другим: вышел вторым —
         // значит не выиграл и не проиграл, и называть это надо как есть.

@@ -47,10 +47,13 @@ import games.cardgames.settings.seatTitles
 import games.cardgames.sound.TableSounds
 import games.cardgames.sound.Vibrations
 import games.cardgames.speech.BotVoice
+import games.cardgames.speech.Chatter
 import games.cardgames.speech.FIRST_BOT_SEAT
+import games.cardgames.speech.Jokes
 import games.cardgames.speech.PHRASE_GAP_MS
 import games.cardgames.speech.Speaker
 import games.cardgames.speech.TURN_PHRASE
+import games.cardgames.speech.TableEvent
 import games.cardgames.speech.TableVoice
 import games.cardgames.speech.cardVerdict
 import games.cardgames.speech.sayEvent
@@ -218,6 +221,11 @@ fun ThousandScreen(
     DisposableEffect(sounds) { onDispose { sounds.release() } }
 
     val rng = remember { Random.Default }
+    // Разговоры за столом и прибаутки — общий слой на все игры (HUNDRED_ONE.md,
+    // 4.2). Живут выше партии: реплика, сказанная до ухода в настройки, не
+    // должна прозвучать второй раз после возвращения.
+    val chatter = remember { Chatter(rng) }
+    val jokes = remember { Jokes(rng) }
     // Открыто ли маленькое меню «Ещё» в углу экрана.
     var menuOpen by remember { mutableStateOf(false) }
     // Открыт ли выбор марьяжа, который хвалим.
@@ -276,6 +284,25 @@ fun ThousandScreen(
             return
         }
         voice.sayBot(text, seat = seat, afterMs = afterMs)
+    }
+
+    /**
+     * Разговор за столом — о том, что случилось у игрока.
+     *
+     * Реплику говорит соперник и всегда со стороны ([TableEvent]): о своём ходе
+     * он уже сказал сам ([botPhrase]), и второй раз про то же — два голоса об
+     * одном (HUNDRED_ONE.md, 4.2). За игрока не говорит никто, кроме
+     * приложения, которое называет ход, — вот тут за столом есть что сказать.
+     *
+     * Реплика идёт за фразой о ходе, а не вместо неё: [TableVoice.waitMs]
+     * отсчитывает, сколько той ещё звучать. Слота хватает одной реплике на кон
+     * — [Chatter.newRound] зовётся на доигранном коне.
+     */
+    fun talk(event: TableEvent, seat: Int = FIRST_BOT_SEAT) {
+        if (!settings.botTalk || !settings.tableTalk) return
+        val line = chatter.line(event, own = false) ?: return
+        // lastPhrase не трогаем: «Повтори» повторяет ход, а не разговор.
+        voice.sayBot(line, seat = seat, afterMs = voice.waitMs())
     }
 
     /**
@@ -417,6 +444,16 @@ fun ThousandScreen(
             roundPhrase(round, summary, session.match, names),
             afterMs = if (signalMs > 0) signalMs + PHRASE_GAP_MS else 0L,
         )
+        // Прибаутка — второй фразой, тем же голосом: стола уже нет, и говорить
+        // о партии, кроме приложения, некому ([Jokes]). Партия кончена — это
+        // когда в матче есть победитель; роспись и болт её не кончают.
+        val winner = session.match.winner
+        if (settings.matchJokes && winner != null) {
+            val joke = jokes.afterMatch(won = winner == PLAYER, gender = settings.playerGender)
+            voice.say(joke, afterMs = voice.waitMs())
+        }
+        // Кон доигран — за столом можно начинать разговор заново.
+        chatter.newRound()
     }
 
     fun dealNew() {
@@ -499,6 +536,13 @@ fun ThousandScreen(
                 round,
                 afterMs = afterMs + speechMs(text, settings.rate) + PHRASE_GAP_MS,
             )
+        }
+        // Прикуп и пас — то, о чём за игрока не сказал никто: ход приложение
+        // назвало, а стол молчит. О своём ходе бот говорит сам.
+        when (move) {
+            is ThousandMove.TakePrikups -> talk(TableEvent.TOOK)
+            ThousandMove.Pass -> talk(TableEvent.PASSED)
+            else -> Unit
         }
         session.persist()
         finishIfOver()
