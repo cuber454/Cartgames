@@ -1,0 +1,7 @@
+# Описание последней сборки. Читает его приложение (app/.../update/Update.kt).
+versionCode=158
+versionName=0.9
+build=0.9.158
+apkUrl=https://github.com/cuber454/Cartgames/releases/download/v0.9.158/cartgames-0.9.158.apk
+sha256=cc684d20e32e10b3980003e6b9abb3848d622d6c0958dd64b0a057a55b3e8823
+notes=CI: черновик APK собирается и по ручному запуску 
